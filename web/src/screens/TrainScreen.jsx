@@ -33,6 +33,7 @@ export default function TrainScreen() {
   const [datasetSel, setDatasetSel] = useState("");
   const [kind, setKind] = useState("finetune");
   const [epochs, setEpochs] = useState(3);
+  const [rec, setRec] = useState(null); // T8 推荐配置
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState("");
   const logRef = useRef(null);
@@ -63,6 +64,26 @@ export default function TrainScreen() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // T8：切换数据集 → 拉取推荐配置（显存档/基座/轮次/学习率…）
+  useEffect(() => {
+    if (!datasetSel) {
+      setRec(null);
+      return;
+    }
+    let alive = true;
+    api
+      .get(`/api/train/preview?dataset_id=${datasetSel}`)
+      .then((r) => {
+        if (!alive) return;
+        setRec(r.recommend || null);
+        if (r.recommend?.epochs) setEpochs(r.recommend.epochs);
+      })
+      .catch(() => alive && setRec(null));
+    return () => {
+      alive = false;
+    };
+  }, [datasetSel]);
 
   // 选中任务时拉取其日志尾部（进程内缓冲，供刷新后恢复展示）
   const openJob = useCallback(
@@ -199,6 +220,25 @@ export default function TrainScreen() {
         </button>
       </div>
       {createError && <p className="form-error">{createError}</p>}
+
+      {rec && (
+        <div className="rec-box">
+          <div className="rec-head">
+            <span className="pf-label">推荐配置</span>
+            <span className="pf-rule">
+              {rec._meta?.tier || "-"} · 语料 {rec._meta?.corpus_mb ?? "?"}MB
+            </span>
+          </div>
+          <div className="rec-chips">
+            <span className="pf-rule">基座 {rec.base_model}</span>
+            <span className="pf-rule">轮次 {rec.epochs}</span>
+            <span className="pf-rule">lr {rec.learning_rate}</span>
+            <span className="pf-rule">cutoff {rec.cutoff_len}</span>
+            <span className="pf-rule">{rec.quantization_bit}bit QLoRA</span>
+            <span className="pf-rule">LoRA {rec.lora_rank}/{rec.lora_alpha}</span>
+          </div>
+        </div>
+      )}
 
       <div className="train-layout">
         <div className="job-list">

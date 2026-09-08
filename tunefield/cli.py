@@ -80,6 +80,46 @@ def _build(args: argparse.Namespace) -> int:
     return 0
 
 
+def _parse_overrides(items: list[str]) -> dict:
+    """--set k=v 解析：数值尽量转 int/float，其余按字符串。"""
+    out: dict = {}
+    for item in items:
+        k, _, v = item.partition("=")
+        if not k or not v:
+            continue
+        try:
+            out[k] = int(v)
+        except ValueError:
+            try:
+                out[k] = float(v)
+            except ValueError:
+                out[k] = v
+    return out
+
+
+def _train(args: argparse.Namespace) -> int:
+    """T8：--dry-run 输出显存/数据量 → 推荐配置（不训练）。
+
+    真实训练经 Web 平台（tunefield serve）创建任务；CLI 训练通道随 T11 串联交付。
+    """
+    from tunefield.engine.recommender import dry_run_lines, recommend_for_dataset
+    from tunefield.pipeline.build import lookup_dataset
+
+    if not args.dry_run:
+        print("[train] 真实训练请通过 Web 平台创建任务：uv run tunefield serve")
+        print("[train] CLI 当前支持 --dry-run 预览推荐配置（真实训练通道随 T11 交付）")
+        return 1
+    try:
+        dataset = lookup_dataset(args.dataset)
+        rec = recommend_for_dataset(dataset, _parse_overrides(args.overrides))
+    except (ValueError, FileNotFoundError) as exc:
+        print(f"[train] 失败：{exc}")
+        return 1
+    for line in dry_run_lines(rec):
+        print(line)
+    return 0
+
+
 def _serve(args: argparse.Namespace) -> int:
     """F1：启动 Web 平台（FastAPI + 内嵌队列 + 前端静态托管）。"""
     from tunefield.serve.app import create_app
@@ -149,26 +189,22 @@ def build_parser() -> argparse.ArgumentParser:
                    help="指令模板 key（continuation | qa），默认 continuation")
     p.set_defaults(func=_build)
 
-    p = sub.add_parser("train", help="创建训练任务（微调 / 从零预训练）")
+    p = sub.add_parser("train", help="训练配置预览（--dry-run）/ 真实训练走 Web 平台")
     p.add_argument("dataset", help="dataset id 或名称")
-    p.add_argument("--domain", required=True, help="领域名称")
     p.add_argument(
-        "--kind",
-        choices=["finetune", "pretrain"],
-        default="finetune",
-        help="finetune=引擎A 微调（默认）；pretrain=引擎B 从零预训练",
+        "--dry-run",
+        action="store_true",
+        help="仅打印按显存/数据量推荐的训练配置，不创建任务",
     )
-    p.add_argument("--base", default="auto", help="微调基座，auto 为按显存推荐（Qwen 系）")
-    p.add_argument("--size", default="200M", help="预训练目标规模（引擎B），如 100M/200M/400M")
     p.add_argument(
         "--set",
         action="append",
         default=[],
         metavar="k=v",
         dest="overrides",
-        help="覆盖推荐器参数，可多次使用，如 --set learning_rate=1e-4",
+        help="覆盖推荐参数，可多次使用，如 --set epochs=2 --set base_model=Qwen/Qwen2.5-0.5B-Instruct",
     )
-    p.set_defaults(func=_make_stub("train"))
+    p.set_defaults(func=_train)
 
     p = sub.add_parser("export", help="导出量化模型（LoRA 合并或预训练全量 → GGUF）")
     p.add_argument("artifact", help="adapter id 或 job id")

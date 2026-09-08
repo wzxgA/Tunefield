@@ -166,6 +166,19 @@ def create_app(handler=None) -> FastAPI:
         return {"dataset": ds, "deduped": False}
 
     # ---------------- 任务路由（T7 起接真实引擎编排） ----------------
+    @app.get("/api/train/preview", tags=["jobs"])
+    async def train_preview(dataset_id: str):
+        """T8：按显存档位 + 数据集体量给出训练参数推荐（供前端面板预览/覆盖）。"""
+        ds = db.get_dataset(dataset_id)
+        if ds is None:
+            return JSONResponse({"detail": "dataset not found"}, status_code=404)
+        from tunefield.engine.recommender import recommend_for_dataset
+
+        return {
+            "dataset": {"id": ds["id"], "name": ds["name"], "status": ds["status"]},
+            "recommend": recommend_for_dataset(ds),
+        }
+
     @app.get("/api/jobs", tags=["jobs"])
     async def list_jobs():
         return db.list_jobs()
@@ -199,7 +212,11 @@ def create_app(handler=None) -> FastAPI:
             )
         domain = (body.get("domain") or dataset["name"] or "default").strip()
         overrides = body.get("overrides") if isinstance(body.get("overrides"), dict) else {}
-        cfg = {k: v for k, v in overrides.items() if v is not None}
+        # T8：推荐值（显存档/数据量）+ 用户覆盖 → 最终生效配置落 config_json
+        from tunefield.engine.recommender import recommend_for_dataset
+
+        rec = recommend_for_dataset(dataset, overrides)
+        cfg = {k: v for k, v in rec.items() if k != "_meta"}
 
         job_id = _new_id()
         db.insert_job(
@@ -207,8 +224,8 @@ def create_app(handler=None) -> FastAPI:
             dataset_id=dataset_id,
             domain=domain,
             kind=kind,
-            base_model=body.get("base") or None,
-            config_json=_json.dumps(cfg, ensure_ascii=False) if cfg else None,
+            base_model=cfg.get("base_model"),
+            config_json=_json.dumps(cfg, ensure_ascii=False),
             status="queued",
             created_at=_now_iso(),
         )

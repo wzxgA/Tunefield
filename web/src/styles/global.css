@@ -237,6 +237,29 @@ body {
   width: 72px;
 }
 
+/* ===== T8 推荐配置面板 ===== */
+
+.rec-box {
+  margin-bottom: var(--gap-md);
+  padding: var(--gap-sm) 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--card);
+}
+
+.rec-head {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-sm);
+  margin-bottom: 4px;
+}
+
+.rec-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--gap-xs) var(--gap-sm);
+}
+
 .btn-primary {
   height: 32px;
   padding: 0 16px;
