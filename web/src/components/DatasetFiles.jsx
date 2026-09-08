@@ -127,11 +127,60 @@ export default function DatasetFiles({ datasetId }) {
                     )}
                   </div>
                 )}
+                {f.chunks && <ChunkSummary chunks={f.chunks} />}
               </div>
             )}
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+// T4 · 切片预览：块数 / P50·P90 / 分桶直方图 / 少量样本块
+function ChunkSummary({ chunks }) {
+  const { count, stats, buckets, params, samples } = chunks;
+  if (!count) return null;
+  const maxCount = Math.max(...buckets.map((b) => b.count), 1);
+  const bucketLabel = (b) => (b.max === null ? "∞" : String(b.max));
+
+  return (
+    <div className="pf-chunks">
+      <div className="pf-clean-head">
+        <span className="pf-label">切片</span>
+        <span className="pf-clean-diff">
+          {count} 块 · P50 {stats.p50} / P90 {stats.p90} tok
+        </span>
+        <span className="pf-rule">块长 {params.size} · 重叠 {params.overlap}</span>
+        {stats.max > params.size && (
+          <span className="pf-warn">含超长块（函数/句子不切）</span>
+        )}
+      </div>
+      <div className="ch-hist" title="块长分布（近似 token）">
+        {buckets.map((b, i) => (
+          <div key={i} className="ch-col" title={`${b.min}–${b.max ?? "∞"}: ${b.count} 块`}>
+            <div className="ch-bar">
+              <div
+                className="ch-bar-fill"
+                style={{ height: `${Math.max((b.count / maxCount) * 100, b.count ? 8 : 2)}%` }}
+              />
+            </div>
+            <span className="ch-col-label">{bucketLabel(b)}</span>
+          </div>
+        ))}
+      </div>
+      {samples.length > 0 && (
+        <ul className="ch-samples">
+          {samples.map((s) => (
+            <li key={s.index} className="ch-sample" title={s.text}>
+              <span className="ch-s-idx">#{s.index}</span>
+              <span className="ch-s-tok">~{s.tokens} tok</span>
+              {s.label && <span className="ch-s-label">{s.label}</span>}
+              {s.oversized && <span className="pf-warn">超长</span>}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

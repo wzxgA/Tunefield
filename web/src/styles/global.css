@@ -789,3 +789,91 @@ body {
   color: var(--text-muted);
   font-size: 11px;
 }
+
+/* ===== T4 切片预览（块数 / P50·P90 / 分桶直方图 / 样本） ===== */
+
+.pf-chunks {
+  margin-top: var(--gap-sm);
+}
+
+.ch-hist {
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  height: 52px;
+  margin: 4px 10px 2px;
+  padding: 2px 0;
+}
+
+.ch-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  height: 100%;
+  min-width: 0;
+}
+
+.ch-bar {
+  flex: 1;
+  display: flex;
+  align-items: flex-end;
+  width: 100%;
+  background: var(--card-muted);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.ch-bar-fill {
+  width: 100%;
+  background: var(--accent);
+  opacity: 0.85;
+  border-radius: 3px 3px 0 0;
+  transition: height var(--dur) var(--ease);
+}
+
+.ch-col-label {
+  font-size: 9px;
+  line-height: 1;
+  color: var(--text-muted);
+}
+
+.ch-samples {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 2px 10px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ch-sample {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-sm);
+  max-width: 100%;
+  padding: 2px 8px;
+  overflow: hidden;
+  white-space: nowrap;
+  border-radius: 6px;
+  background: var(--card-muted);
+  font-size: 12px;
+}
+
+.ch-s-idx {
+  font-family: Consolas, monospace;
+  color: var(--text-muted);
+}
+
+.ch-s-tok {
+  flex: none;
+  font-size: 11px;
+  color: var(--accent-text);
+}
+
+.ch-s-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #4a443a;
+}

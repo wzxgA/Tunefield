@@ -135,6 +135,7 @@ def scan_dataset_files(
     if not root.exists():
         return []
 
+    from tunefield.pipeline.chunking import chunk_summary
     from tunefield.pipeline.cleaning import clean_segments
 
     files: list[dict] = []
@@ -145,6 +146,7 @@ def scan_dataset_files(
         data = path.read_bytes()
         r = parse_bytes(rel, data)
         clean = None
+        chunks = None
         if with_clean and r["status"] == "ok" and r["segments"]:
             c = clean_segments(r["segments"])
             clean = {
@@ -154,6 +156,8 @@ def scan_dataset_files(
                 "rules": {k: v for k, v in c["stats"].items() if v > 0},
                 "preview": _preview({"segments": c["segments"]}, preview_chars),
             }
+            # T4：清洗后段 → 切片（默认块长/重叠档位，供预览与分布展示）
+            chunks = chunk_summary(c["segments"])
         files.append(
             {
                 "name": rel,
@@ -165,6 +169,7 @@ def scan_dataset_files(
                 "blocks": r["blocks"],
                 "preview": _preview(r, preview_chars),
                 "clean": clean,
+                "chunks": chunks,
             }
         )
     return files

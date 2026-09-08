@@ -66,9 +66,20 @@ def test_dataset_files_after_upload():
             "invisible", "space", "fullwidth", "html", "page", "boiler",
         }
 
+        # T4 切片摘要：块数/分布/统计自洽
+        chunks = files["b.txt"]["chunks"]
+        assert chunks is not None
+        assert chunks["count"] >= 1
+        assert sum(b["count"] for b in chunks["buckets"]) == chunks["count"]
+        s = chunks["stats"]
+        assert 0 < s["min"] <= s["max"] and s["p50"] <= s["p90"]
+        assert chunks["params"]["size"] == 768 and chunks["params"]["overlap"] == 96
+        assert len(chunks["samples"]) >= 1
+
         assert files["c.bin"]["status"] == "unsupported"
         assert files["c.bin"]["preview"] == ""
         assert files["c.bin"]["clean"] is None
+        assert files["c.bin"]["chunks"] is None
 
         # 数据集归属正确
         assert fr.json()["dataset"]["id"] == dataset["id"]
