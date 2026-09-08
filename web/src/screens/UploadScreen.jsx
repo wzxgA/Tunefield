@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
+import DatasetFiles from "../components/DatasetFiles.jsx";
 
-// 数据上传屏（T1）：多文件上传 + 哈希去重 + 已接入 dataset 清单
+// 数据上传屏（T1 接入 + T2 解析预览）：多文件上传 + 哈希去重 +
+// 已接入 dataset 清单；点开数据集可逐文件查看解析状态与中间文本预览
 export default function UploadScreen() {
   const [name, setName] = useState("");
   const [files, setFiles] = useState([]); // File[]
@@ -9,6 +11,7 @@ export default function UploadScreen() {
   const [uploading, setUploading] = useState(false);
   const [notice, setNotice] = useState(""); // "上传成功 / 去重命中 / 错误"
   const [noticeKind, setNoticeKind] = useState(""); // ok | dup | err
+  const [inspect, setInspect] = useState({}); // {datasetId: bool} 展开解析预览
 
   const loadDatasets = useCallback(async () => {
     try {
@@ -23,6 +26,9 @@ export default function UploadScreen() {
   }, [loadDatasets]);
 
   const onPick = (e) => setFiles(Array.from(e.target.files || []));
+
+  const toggleInspect = (datasetId) =>
+    setInspect((s) => ({ ...s, [datasetId]: !s[datasetId] }));
 
   const onUpload = async () => {
     if (!name.trim()) {
@@ -107,12 +113,22 @@ export default function UploadScreen() {
               <div key={d.id} className="ds-item">
                 <div className="ds-line1">
                   <span className="ds-name">{d.name}</span>
-                  <span className="badge st-ingested">已接入</span>
+                  <span className="ds-actions">
+                    <span className="badge st-ingested">已接入</span>
+                    <button
+                      type="button"
+                      className="btn-inspect"
+                      onClick={() => toggleInspect(d.id)}
+                    >
+                      {inspect[d.id] ? "收起解析" : "解析预览"}
+                    </button>
+                  </span>
                 </div>
                 <div className="ds-line2">
                   <span className="ds-id">{d.id.slice(0, 10)}</span>
                   <span className="ds-fp">指纹 {d.content_hash.slice(0, 10)}…</span>
                 </div>
+                {inspect[d.id] && <DatasetFiles datasetId={d.id} />}
               </div>
             ))}
           </div>

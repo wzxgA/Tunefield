@@ -22,7 +22,8 @@ dependencies = [
 pipeline = [
     "PyMuPDF>=1.24",
     "python-docx>=1.1",
-    "tree-sitter>=0.23",
+    # tree-sitter 核心与各语法包需配对：0.26 起 capsule API 移除，锁 <0.26
+    "tree-sitter>=0.25,<0.26",
     "tree-sitter-python>=0.23",
     "tree-sitter-javascript>=0.23",
     "tree-sitter-typescript>=0.23",

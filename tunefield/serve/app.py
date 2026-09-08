@@ -19,6 +19,7 @@ from fastapi import FastAPI, File, Form, UploadFile, WebSocket, WebSocketDisconn
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
 
 from tunefield import __version__
 from tunefield.config import WEB_DIST_DIR, ensure_dirs
@@ -99,6 +100,21 @@ def create_app() -> FastAPI:
         if ds is None:
             return JSONResponse({"detail": "dataset not found"}, status_code=404)
         return ds
+
+    @app.get("/api/datasets/{dataset_id}/files", tags=["datasets"])
+    async def dataset_files(dataset_id: str):
+        """T2：逐文件解析状态 + 中间文本预览（pdf/docx/代码等结构化解析结果）。
+
+        对 data/raw/<hash> 内每个文件实时解析，返回每文件的
+        kind/language/status/error/字符数/文本块数/preview。
+        """
+        ds = db.get_dataset(dataset_id)
+        if ds is None:
+            return JSONResponse({"detail": "dataset not found"}, status_code=404)
+        from tunefield.pipeline.parsers import scan_dataset_files
+
+        files = await run_in_threadpool(scan_dataset_files, ds)
+        return {"dataset": {"id": ds["id"], "name": ds["name"]}, "files": files}
 
     @app.post("/api/datasets", tags=["datasets"])
     async def create_dataset(name: str = Form(...), files: list[UploadFile] = File(...)):
