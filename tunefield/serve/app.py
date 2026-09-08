@@ -80,7 +80,13 @@ def create_app() -> FastAPI:
 
     @app.get("/api/meta", tags=["system"])
     async def meta() -> dict:
-        return {"name": "Tunefield", "version": __version__}
+        from tunefield.engine import base
+
+        return {
+            "name": "Tunefield",
+            "version": __version__,
+            "base": base.pinned_info(),
+        }
 
     # ---------------- 任务占位路由（后续按 F2/API 契约补齐） ----------------
     @app.get("/api/jobs", tags=["jobs"])

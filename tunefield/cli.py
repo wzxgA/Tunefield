@@ -46,6 +46,28 @@ def _serve(args: argparse.Namespace) -> int:
     return 0
 
 
+def _base_smoke(args: argparse.Namespace) -> int:
+    """T0：基座加载冒烟 + 定版记录。"""
+    from tunefield.engine import base
+
+    try:
+        result = base.smoke(
+            args.model,
+            prompt=args.prompt,
+            max_new_tokens=args.max_new_tokens,
+        )
+    except Exception as exc:  # 冒烟失败（缺依赖/下载/显存）打印原因
+        print(f"[base] 冒烟失败：{exc}")
+        return 1
+
+    print(f"[base] 定版基座：{result['base']}")
+    print(f"[base] 运行设备：{result['device']} · 峰值显存：{result['vram_gb']}GB")
+    print(f"[base] 冒烟耗时：{result['elapsed_s']}s")
+    print(f"[base] 输入：{result['prompt']}")
+    print(f"[base] 输出：{result['output']}")
+    return 0
+
+
 def _make_stub(command: str):
     """生成一个空命令处理函数：打印交付排期并返回非零退出码。"""
 
@@ -116,6 +138,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--port", type=int, default=8000, help="监听端口，默认 8000")
     p.add_argument("--reload", action="store_true", help="开发模式热重载")
     p.set_defaults(func=_serve)
+
+    p = sub.add_parser("base", help="T0 基座：定版 + 加载冒烟（Qwen 系，默认 Qwen2.5-0.5B-Instruct）")
+    p.add_argument("--model", default=None, help="覆盖基座模型 id（默认取定版记录）")
+    p.add_argument("--prompt", default="你好，请简单介绍一下你自己。", help="冒烟提示词")
+    p.add_argument("--max-new-tokens", type=int, default=16, help="冒烟生成上限 token")
+    p.set_defaults(func=_base_smoke)
 
     return parser
 

@@ -31,11 +31,13 @@ pipeline = [
     "tree-sitter-rust>=0.23",
 ]
 # 训练引擎（T7 微调 / T13 从零预训练），版本以 T0 实测定版为准
+# torch 经 [tool.uv.sources] 从 PyTorch 官方 cu128 源解析（Windows 上 PyPI 的 torch 是 CPU 版）
 train = [
     "transformers>=4.44",
     "peft>=0.12",
     "bitsandbytes>=0.43; platform_system != 'Windows' or python_version < '3.12'",
     "accelerate>=0.33",
+    "numpy>=1.26",
     "torch>=2.2",
 ]
 # 开发与测试
@@ -49,6 +51,14 @@ tunefield = "tunefield.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["tunefield*"]
+
+# torch：从 PyTorch 官方 CUDA 源（cu128）解析，而非 PyPI 的 CPU 版
+[[tool.uv.index]]
+name = "pytorch"
+url = "https://download.pytorch.org/whl/cu128"
+
+[tool.uv.sources]
+torch = { index = "pytorch" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
