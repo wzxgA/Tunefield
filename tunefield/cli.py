@@ -50,6 +50,36 @@ def _ingest(args: argparse.Namespace) -> int:
     return 0
 
 
+def _build(args: argparse.Namespace) -> int:
+    """T6：全管线构建 dataset（解析→清洗→切片→指令化→质检 + JSONL 落盘）。"""
+    from tunefield.pipeline.build import lookup_dataset, run_build
+
+    try:
+        dataset = lookup_dataset(args.dataset)
+        result = run_build(
+            dataset,
+            chunk_size=args.chunk,
+            overlap=args.overlap,
+            template=args.template,
+        )
+    except (ValueError, FileNotFoundError) as exc:
+        print(f"[build] 失败：{exc}")
+        return 1
+
+    report = result["report"]
+    print(f"[build] 数据集：{dataset['name']} · 状态：built")
+    print(f"[build] 样本数：{report['summary']['sample_count']} · "
+          f"语料：{report['summary']['corpus_mb']}MB · "
+          f"块重复率：{report['summary']['dup_rate'] * 100:.1f}%")
+    print(f"[build] 长度 P50/P90：{report['summary']['length']['p50']}/{report['summary']['length']['p90']}")
+    print(f"[build] 质检结论：{report['overall']}")
+    for check in report["checks"]:
+        if check["level"] in ("warn", "error"):
+            print(f"[build]  · {check['metric']} {check['value']} —— {check['advice']}")
+    print(f"[build] 产物：{result['train_jsonl']}")
+    return 0
+
+
 def _serve(args: argparse.Namespace) -> int:
     """F1：启动 Web 平台（FastAPI + 内嵌队列 + 前端静态托管）。"""
     from tunefield.serve.app import create_app
@@ -115,7 +145,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("dataset", help="dataset id 或名称")
     p.add_argument("--chunk", type=int, default=768, help="目标块长（token），默认 768")
     p.add_argument("--overlap", type=int, default=96, help="相邻块重叠（token），默认 96")
-    p.set_defaults(func=_make_stub("build"))
+    p.add_argument("--template", default="continuation",
+                   help="指令模板 key（continuation | qa），默认 continuation")
+    p.set_defaults(func=_build)
 
     p = sub.add_parser("train", help="创建训练任务（微调 / 从零预训练）")
     p.add_argument("dataset", help="dataset id 或名称")
@@ -174,6 +206,10 @@ def main(argv: list[str] | None = None) -> int:
     if func is None:  # 未给子命令时打印帮助
         parser.print_help()
         return 0
+    # 保证全新数据目录下 CLI（未先启动 serve）也能直接读写数据库
+    from tunefield.serve import db
+
+    db.init_db()
     return func(args)
 
 

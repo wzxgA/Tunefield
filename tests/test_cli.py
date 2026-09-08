@@ -45,11 +45,12 @@ def test_no_command_prints_help() -> None:
     assert "ingest" in result.stdout
 
 
-def test_stub_reports_not_implemented() -> None:
-    # build 仍是 stub（管线 T2+ 交付），应提示尚未实现
-    result = _run_cli("build", "some-dataset")
+def test_build_is_real_command() -> None:
+    # T6 起 build 是真实命令：dataset 不存在时明确报错，而非"尚未实现"
+    result = _run_cli("build", "no-such-dataset")
     assert result.returncode == 1
-    assert "尚未实现" in result.stdout
+    assert "尚未实现" not in result.stdout
+    assert "失败" in result.stdout
 
 
 def test_ingest_is_real_command() -> None:

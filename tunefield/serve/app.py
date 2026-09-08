@@ -116,6 +116,44 @@ def create_app() -> FastAPI:
         files = await run_in_threadpool(scan_dataset_files, ds)
         return {"dataset": {"id": ds["id"], "name": ds["name"]}, "files": files}
 
+    @app.post("/api/datasets/{dataset_id}/build", tags=["datasets"])
+    async def build_dataset(dataset_id: str, body: dict | None = None):
+        """T6：全管线构建（解析→清洗→切片→指令化→质检），产出 train.jsonl 与报告。"""
+        ds = db.get_dataset(dataset_id)
+        if ds is None:
+            return JSONResponse({"detail": "dataset not found"}, status_code=404)
+        body = body or {}
+        from tunefield.pipeline.build import run_build
+
+        def _run():
+            return run_build(
+                ds,
+                chunk_size=int(body.get("chunk_size", 768)),
+                overlap=int(body.get("overlap", 96)),
+                template=str(body.get("template", "continuation")),
+            )
+
+        try:
+            return await run_in_threadpool(_run)
+        except (ValueError, FileNotFoundError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+
+    @app.get("/api/datasets/{dataset_id}/report", tags=["datasets"])
+    async def dataset_report(dataset_id: str):
+        """T6：已构建数据集的质检报告（来自 stats_json）。"""
+        ds = db.get_dataset(dataset_id)
+        if ds is None:
+            return JSONResponse({"detail": "dataset not found"}, status_code=404)
+        report = None
+        if ds.get("status") == "built" and ds.get("stats_json"):
+            try:
+                import json
+
+                report = json.loads(ds["stats_json"])
+            except (ValueError, TypeError):
+                report = None
+        return {"dataset": {"id": ds["id"], "name": ds["name"], "status": ds["status"]}, "report": report}
+
     @app.post("/api/datasets", tags=["datasets"])
     async def create_dataset(name: str = Form(...), files: list[UploadFile] = File(...)):
         """上传一个或多个文件 → 接入（哈希去重，重复秒回既有 dataset）。"""

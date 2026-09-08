@@ -216,3 +216,12 @@ def list_datasets() -> list[dict[str, Any]]:
             "SELECT * FROM datasets ORDER BY created_at"
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+def set_dataset_built(dataset_id: str, stats_json: str) -> None:
+    """T6：管线构建完成 → status=built，stats_json 写质检报告。"""
+    with transaction() as conn:
+        conn.execute(
+            "UPDATE datasets SET status = 'built', stats_json = ? WHERE id = ?",
+            (stats_json, dataset_id),
+        )

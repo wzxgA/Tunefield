@@ -573,6 +573,11 @@ body {
   color: var(--ok);
 }
 
+.st-built {
+  background: var(--accent);
+  color: #fff;
+}
+
 /* ===== T2 数据集解析预览（逐文件状态 + 中间文本） ===== */
 
 .ds-actions {
@@ -951,6 +956,89 @@ body {
   background: var(--card-muted);
   color: #4a443a;
   font: 400 12px/1.5 var(--font-sans);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ===== T6 质检报告卡 ===== */
+
+.rp-card {
+  margin: var(--gap-sm) 0;
+  padding: var(--gap-sm) 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+}
+
+.rp-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.rp-note {
+  padding: 2px 0 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.rp-sum {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.rp-chip {
+  padding: 1px 8px;
+  border-radius: 8px;
+  background: var(--card-muted);
+  font-size: 11px;
+  color: var(--text);
+}
+
+.rp-chip.rp-warn {
+  color: var(--warn);
+}
+
+.rp-checks {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+}
+
+.rp-check {
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+
+.rp-check.rp-warn {
+  background: var(--accent-soft);
+  color: #7a5a2b;
+}
+
+.rp-check.rp-error {
+  background: #f3e3dd;
+  color: var(--err);
+}
+
+.rp-examples {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.rp-example {
+  margin: 4px 0 0;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--card-muted);
+  font: 400 11px/1.5 var(--font-sans);
   white-space: pre-wrap;
   word-break: break-word;
 }
