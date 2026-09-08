@@ -14,7 +14,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable
 
-from tunefield.serve import db
+from tunefield.serve import db, events
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +25,16 @@ JobHandler = Callable[[str], Awaitable[None]]
 _RECOVERABLE = ("queued", "pending_gpu")
 # 中断后需标记 failed 的执行态（可配合断点续训重启）
 _INTERRUPTED = ("running", "exporting", "parsing", "training")
+
+
+def set_status(
+    job_id: str, status: str, *, progress: float | None = None, error: str | None = None
+) -> None:
+    """状态落库 + 广播 job.status 事件（队列与 handler 统一走这里推进状态）。"""
+    db.set_job_status(job_id, status, progress=progress, error=error)
+    events.hub.publish(
+        "job.status", {"id": job_id, "status": status, "progress": progress, "error": error}
+    )
 
 
 @dataclass
@@ -67,7 +77,7 @@ class JobQueue:
             self.queue.put_nowait(job["id"])
             logger.info("重新入队任务 %s（状态 %s）", job["id"], job["status"])
         for job in db.jobs_by_status(_INTERRUPTED):
-            db.set_job_status(job["id"], "failed", error="进程重启导致任务中断，等待手动重跑")
+            set_status(job["id"], "failed", error="进程重启导致任务中断，等待手动重跑")
             logger.warning("任务 %s 标记为 failed（进程重启中断）", job["id"])
 
     async def _consume(self) -> None:
@@ -77,27 +87,27 @@ class JobQueue:
                 await self._run_one(job_id)
             except Exception:
                 logger.exception("任务 %s 处理异常", job_id)
-                db.set_job_status(job_id, "failed", error="队列 worker 处理异常")
+                set_status(job_id, "failed", error="队列 worker 处理异常")
             finally:
                 self.queue.task_done()
 
     async def _run_one(self, job_id: str) -> None:
         # GPU 预检（钩子）：真实显存探测随 T7 接入；此处默认通过。
         if not await self._gpu_available():
-            db.set_job_status(job_id, "pending_gpu")
+            set_status(job_id, "pending_gpu")
             # 延时后重新入队继续尝试
             await asyncio.sleep(self.gpu_poll_interval)
             self.queue.put_nowait(job_id)
             return
 
         # 状态推进：queued -> running -> done/failed（handler 内推进中间态）
-        db.set_job_status(job_id, "running")
+        set_status(job_id, "running")
         try:
             await self.handler(job_id)
-            db.set_job_status(job_id, "done", progress=1.0)
+            set_status(job_id, "done", progress=1.0)
         except Exception as exc:
             logger.exception("任务 %s 失败", job_id)
-            db.set_job_status(job_id, "failed", error=str(exc))
+            set_status(job_id, "failed", error=str(exc))
 
     async def _gpu_available(self) -> bool:
         """GPU 预检钩子。F1 默认恒 True；T7 接入 torch.cuda 显存/占用探测。"""

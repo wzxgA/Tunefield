@@ -15,15 +15,15 @@ import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from tunefield import __version__
 from tunefield.config import WEB_DIST_DIR, ensure_dirs
-from tunefield.serve import db
-from tunefield.serve.queue import JobQueue
+from tunefield.serve import db, events
+from tunefield.serve.queue import JobQueue, set_status
 
 logger = logging.getLogger(__name__)
 
@@ -38,16 +38,17 @@ def _new_id() -> str:
 
 
 async def _placeholder_handler(job_id: str) -> None:
-    """F1 占位 handler：模拟任务推进到完成，供队列/状态机闭环联调。
+    """F1 占位 handler：模拟任务推进到完成，供队列/状态机/事件流闭环联调。
 
     真实引擎编排（解析→训练→导出）由 T7/T13 替换实现。
     """
-    db.set_job_status(job_id, "running", progress=0.1)
+    set_status(job_id, "running", progress=0.1)
     await asyncio.sleep(1.0)
-    db.set_job_status(job_id, "running", progress=0.5)
-    # 追加 loss 采样点占位，验证 loss 落库链路
-    db.append_loss(job_id, "[1,0.9]")
-    db.append_loss(job_id, "[2,0.7]")
+    set_status(job_id, "running", progress=0.5)
+    # 追加 loss 采样点占位，验证 loss 落库与推送链路
+    for step, value in ((1, 0.9), (2, 0.7)):
+        db.append_loss(job_id, f"[{step},{value}]")
+        events.hub.publish("job.loss", {"id": job_id, "step": step, "value": value})
     await asyncio.sleep(1.0)
 
 
@@ -106,8 +107,28 @@ def create_app() -> FastAPI:
             status="queued",
             created_at=_now_iso(),
         )
+        events.hub.publish(
+            "job.created",
+            {"id": job_id, "domain": body.get("domain", "default"),
+             "kind": body.get("kind", "finetune"), "status": "queued"},
+        )
         queue.enqueue(job_id)
         return db.get_job(job_id)
+
+    # ---------------- WebSocket 事件流 ----------------
+    @app.websocket("/api/events")
+    async def events_ws(ws: WebSocket):
+        """前端订阅事件流：job.created / job.status / job.loss 实时推送。"""
+        await ws.accept()
+        events.hub.connect(ws)
+        try:
+            while True:
+                # 客户端消息仅作心跳/占位，内容忽略
+                await ws.receive_text()
+        except WebSocketDisconnect:
+            pass
+        finally:
+            events.hub.disconnect(ws)
 
     # ---------------- 静态托管（放最后，避免吞掉 API 路由） ----------------
     _mount_static(app)

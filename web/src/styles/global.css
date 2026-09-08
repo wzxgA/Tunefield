@@ -175,3 +175,281 @@ body {
 .placeholder-card:hover {
   border-color: var(--accent);
 }
+
+/* ===== 训练屏（F2）：实时任务列表 / 状态徽章 / 进度 / loss 曲线 ===== */
+
+.train-screen {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.train-head {
+  flex: none;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+/* 事件流连接指示灯 */
+.ws-dot {
+  width: 8px;
+  height: 8px;
+  margin-top: 6px;
+  border-radius: 50%;
+  background: var(--err);
+  transition: background var(--dur) var(--ease);
+}
+
+.ws-on {
+  background: var(--ok);
+}
+
+.train-form {
+  flex: none;
+  display: flex;
+  gap: var(--gap-sm);
+  margin: var(--gap-md) 0 var(--gap-sm);
+}
+
+.input {
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+  color: var(--text);
+  font: 400 13px var(--font-sans);
+  outline: none;
+  transition: border-color var(--dur) var(--ease);
+}
+
+.input:focus {
+  border-color: var(--accent);
+}
+
+.train-form .input:first-child {
+  width: 180px;
+}
+
+.btn-primary {
+  height: 32px;
+  padding: 0 16px;
+  border: none;
+  border-radius: var(--radius);
+  background: var(--accent);
+  color: #fff;
+  font: 600 13px var(--font-sans);
+  cursor: pointer;
+  transition: opacity var(--dur) var(--ease), transform var(--dur) var(--ease);
+}
+
+.btn-primary:hover {
+  opacity: 0.92;
+}
+
+.btn-primary:active {
+  transform: scale(0.98);
+}
+
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.form-error {
+  margin: 0 0 var(--gap-sm);
+  color: var(--err);
+  font-size: 12px;
+}
+
+.train-layout {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 300px 1fr;
+  gap: var(--gap-md);
+}
+
+/* 左：任务列表（内部滚动） */
+.job-list {
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-xs);
+  padding-right: 2px;
+}
+
+.job-empty {
+  padding: var(--gap-lg);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-card);
+  color: var(--text-muted);
+  font-size: 13px;
+  text-align: center;
+}
+
+.job-item {
+  display: block;
+  width: 100%;
+  padding: 10px var(--gap-md);
+  text-align: left;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--card);
+  cursor: pointer;
+  transition: border-color var(--dur) var(--ease),
+    background-color var(--dur) var(--ease);
+}
+
+.job-item:hover {
+  border-color: var(--border-strong);
+}
+
+.job-active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.job-line1 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.job-domain {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.job-line2 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 2px;
+}
+
+.job-id {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-family: Consolas, monospace;
+}
+
+.job-kind {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* 状态徽章 */
+.badge {
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.st-queued {
+  background: var(--card-muted);
+  color: var(--text-muted);
+}
+
+.st-pending_gpu {
+  background: var(--accent-soft);
+  color: var(--warn);
+}
+
+.st-running {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.st-done {
+  background: #e9f0e6;
+  color: var(--ok);
+}
+
+.st-failed {
+  background: #f3e3dd;
+  color: var(--err);
+}
+
+/* 进度条 */
+.job-progress {
+  height: 4px;
+  margin-top: 8px;
+  border-radius: 2px;
+  background: var(--card-muted);
+  overflow: hidden;
+}
+
+.job-progress-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent);
+  transition: width var(--dur) var(--ease);
+}
+
+.job-progress.big {
+  height: 6px;
+  margin: var(--gap-sm) 0;
+}
+
+/* 右：任务详情 + loss 图 */
+.job-detail {
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--gap-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--card);
+}
+
+.detail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.detail-domain {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.detail-meta {
+  display: flex;
+  gap: var(--gap-lg);
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.detail-error {
+  margin: var(--gap-sm) 0 0;
+  color: var(--err);
+  font-size: 12px;
+}
+
+.loss-panel {
+  margin-top: var(--gap-md);
+}
+
+.loss-title {
+  display: flex;
+  align-items: baseline;
+  gap: var(--gap-sm);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.loss-count {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.loss-chart {
+  height: 280px;
+  margin-top: var(--gap-sm);
+}
