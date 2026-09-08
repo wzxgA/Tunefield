@@ -35,12 +35,16 @@ pipeline = [
 # 训练引擎（T7 微调 / T13 从零预训练），版本以 T0 实测定版为准
 # torch 经 [tool.uv.sources] 从 PyTorch 官方 cu128 源解析（Windows 上 PyPI 的 torch 是 CPU 版）
 train = [
-    "transformers>=4.44",
+    "transformers>=4.44,<4.47",
     "peft>=0.12",
     "bitsandbytes>=0.43; platform_system != 'Windows' or python_version < '3.12'",
     "accelerate>=0.33",
     "numpy>=1.26",
     "torch>=2.2",
+    "llamafactory>=0.7.1",
+    "pyarrow>=15,<18",
+    "datasets>=2.14.6,<3",
+    "bitsandbytes>=0.43",
 ]
 # 开发与测试
 dev = [
