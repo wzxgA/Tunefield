@@ -128,6 +128,37 @@ export default function DatasetFiles({ datasetId }) {
                   </div>
                 )}
                 {f.chunks && <ChunkSummary chunks={f.chunks} />}
+                {f.samples && f.samples.length > 0 && (
+                  <div className="pf-instruct">
+                    <div className="pf-clean-head">
+                      <span className="pf-label">指令样本</span>
+                      <span className="pf-rule">Alpaca · 每类取首块</span>
+                    </div>
+                    {f.samples.map((s) => (
+                      <div key={s.template} className="in-card">
+                        <div className="in-head">
+                          <span className={`in-badge${s.template === "qa" ? " in-qa" : ""}`}>
+                            {s.template === "qa" ? "抽问" : "续写"}
+                          </span>
+                        </div>
+                        <div className="in-field">
+                          <span className="in-k">instruction</span>
+                          <span className="in-v">{s.instruction}</span>
+                        </div>
+                        {s.input && (
+                          <div className="in-field">
+                            <span className="in-k">input</span>
+                            <span className="in-v">{s.input}</span>
+                          </div>
+                        )}
+                        <div className="in-field in-field-out">
+                          <span className="in-k">output</span>
+                          <pre className="in-out">{s.output}</pre>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </div>

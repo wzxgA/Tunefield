@@ -210,14 +210,11 @@ def _bucket_index(tokens: int) -> int:
     return len(BUCKETS) - 1
 
 
-def chunk_summary(
-    segments: list[dict], *, size: int = 768, overlap: int = 96, sample_limit: int = 6
+def summarize_blocks(
+    blocks: list[dict], *, size: int | None = None, overlap: int | None = None,
+    sample_limit: int = 6,
 ) -> dict:
-    """块长分布汇总：分桶直方图 / min·max·mean·p50·p90 / 少量样本块。
-
-    供 files API 与前端切片预览（直方图 + 样本），避免整份块文本全量下发。
-    """
-    blocks = chunk_segments(segments, size=size, overlap=overlap)
+    """从已切好的块直接生成分布汇总（供复用块结果时避免二次切片）。"""
     tokens = sorted(b["tokens"] for b in blocks)
     buckets = [0] * len(BUCKETS)
     for t in tokens:
@@ -259,3 +256,11 @@ def chunk_summary(
         "params": {"size": size, "overlap": overlap},
         "samples": samples,
     }
+
+
+def chunk_summary(
+    segments: list[dict], *, size: int = 768, overlap: int = 96, sample_limit: int = 6
+) -> dict:
+    """便捷入口：先按 size/overlap 切片，再生成分布汇总。"""
+    blocks = chunk_segments(segments, size=size, overlap=overlap)
+    return summarize_blocks(blocks, size=size, overlap=overlap, sample_limit=sample_limit)

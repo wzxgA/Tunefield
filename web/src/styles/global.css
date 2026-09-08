@@ -877,3 +877,80 @@ body {
   text-overflow: ellipsis;
   color: #4a443a;
 }
+
+/* ===== T5 指令样本预览（Alpaca 卡片） ===== */
+
+.pf-instruct {
+  margin-top: var(--gap-sm);
+}
+
+.in-card {
+  margin: 0 10px 6px;
+  padding: var(--gap-sm) 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+}
+
+.in-head {
+  display: flex;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.in-badge {
+  padding: 0 8px;
+  border-radius: 8px;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.in-badge.in-qa {
+  background: #e7edf3;
+  color: #45627c;
+}
+
+.in-field {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--gap-sm);
+  margin-top: 2px;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.in-k {
+  flex: none;
+  min-width: 64px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--card-muted);
+  color: var(--text-muted);
+  font-family: Consolas, monospace;
+  font-size: 11px;
+  text-align: center;
+}
+
+.in-v {
+  color: var(--text);
+}
+
+.in-field-out {
+  align-items: stretch;
+}
+
+.in-out {
+  margin: 0;
+  padding: 4px 8px;
+  flex: 1;
+  max-height: 120px;
+  overflow: auto;
+  border-radius: 6px;
+  background: var(--card-muted);
+  color: #4a443a;
+  font: 400 12px/1.5 var(--font-sans);
+  white-space: pre-wrap;
+  word-break: break-word;
+}

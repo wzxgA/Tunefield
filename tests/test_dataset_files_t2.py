@@ -76,10 +76,18 @@ def test_dataset_files_after_upload():
         assert chunks["params"]["size"] == 768 and chunks["params"]["overlap"] == 96
         assert len(chunks["samples"]) >= 1
 
+        # T5 指令样本预览：两种模板各一，Alpaca 字段齐全
+        samples = files["b.txt"]["samples"]
+        assert {s["template"] for s in samples} == {"continuation", "qa"}
+        for s in samples:
+            assert s["instruction"] and s["output"]
+            assert s["input"] is None or isinstance(s["input"], str)
+
         assert files["c.bin"]["status"] == "unsupported"
         assert files["c.bin"]["preview"] == ""
         assert files["c.bin"]["clean"] is None
         assert files["c.bin"]["chunks"] is None
+        assert files["c.bin"]["samples"] == []
 
         # 数据集归属正确
         assert fr.json()["dataset"]["id"] == dataset["id"]
