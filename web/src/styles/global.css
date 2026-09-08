@@ -1,0 +1,177 @@
+/* 暖白设计语言 + 全局变量（贴合轻量约束：无 UI 组件库、无动画库） */
+
+:root {
+  /* 色彩 · 暖白基调 */
+  --bg: #faf7f1;            /* 象牙白背景 */
+  --card: #fffdf8;          /* 暖白卡片 */
+  --card-muted: #f4f0e7;    /* 次级面板 */
+  --text: #2c2822;          /* 暖炭文字 */
+  --text-muted: #8b8477;    /* 暖灰弱化文字 */
+  --border: #e7e1d5;        /* 暖灰边框 */
+  --border-strong: #d8d0bf;
+  --accent: #b0955d;        /* 暖米色点缀 */
+  --accent-soft: #f1ead9;
+  --accent-text: #6e5a2e;
+  --ok: #5f8f5b;
+  --warn: #b07c3f;
+  --err: #a9503c;
+
+  /* 动效（统一时长与缓动，仅用 transition/transform/opacity） */
+  --dur: 200ms;
+  --ease: cubic-bezier(0.25, 0.8, 0.35, 1);
+
+  /* 圆角 */
+  --radius: 8px;
+  --radius-card: 12px;
+
+  /* 紧凑间距 */
+  --gap-xs: 4px;
+  --gap-sm: 8px;
+  --gap-md: 12px;
+  --gap-lg: 16px;
+
+  /* 固定界面尺寸：720px 高、内部滚动 */
+  --app-height: 720px;
+  --app-width: 1080px;
+
+  --font-sans: "PingFang SC", "Microsoft YaHei", system-ui, -apple-system,
+    "Segoe UI", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 400 14px/1.6 var(--font-sans);
+}
+
+/* ===== 应用外壳：固定 720px，内容区内部滚动 ===== */
+
+.app {
+  width: min(var(--app-width), 96vw);
+  height: var(--app-height);
+  margin: 24px auto;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  overflow: hidden;
+}
+
+.app-header {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 52px;
+  padding: 0 var(--gap-lg);
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+}
+
+.brand {
+  display: flex;
+  align-items: baseline;
+  gap: var(--gap-sm);
+}
+
+.brand-name {
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+
+.brand-sub {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.tabs {
+  display: flex;
+  gap: var(--gap-xs);
+}
+
+.tab {
+  padding: 6px 14px;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius);
+  font: 500 13px/1.4 var(--font-sans);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color var(--dur) var(--ease),
+    background-color var(--dur) var(--ease);
+}
+
+.tab:hover {
+  color: var(--text);
+  background: var(--card-muted);
+}
+
+.tab-active {
+  color: var(--text);
+  background: var(--accent-soft);
+  font-weight: 600;
+}
+
+.app-body {
+  flex: 1;
+  overflow-y: auto; /* 内部滚动，整体不缩放 */
+  padding: var(--gap-lg);
+}
+
+/* ===== 屏内容与切换动画 ===== */
+
+.screen {
+  animation: screen-in var(--dur) var(--ease) both;
+}
+
+@keyframes screen-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.screen-title {
+  margin: 0 0 var(--gap-xs);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.screen-hint {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+/* 占位卡片（各屏正式组件由对应任务交付） */
+.placeholder-card {
+  margin-top: var(--gap-lg);
+  padding: var(--gap-lg);
+  background: var(--card);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-card);
+  color: var(--text-muted);
+  font-size: 13px;
+  transition: border-color var(--dur) var(--ease);
+}
+
+.placeholder-card:hover {
+  border-color: var(--accent);
+}

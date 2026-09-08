@@ -1,1 +1,29 @@
+# 设计文档（不入库）
 plans/*
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+
+# 前端
+web/node_modules/
+web/dist/
+
+# 运行期数据与模型产物（保留目录结构，忽略内容）
+data/raw/*
+data/datasets/*
+data/*.db
+models/bases/*
+models/adapters/*
+models/gguf/*
+!data/raw/.gitkeep
+!data/datasets/.gitkeep
+!models/bases/.gitkeep
+!models/adapters/.gitkeep
+!models/gguf/.gitkeep
+
+# 环境与锁文件产物
+.DS_Store
