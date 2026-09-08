@@ -15,7 +15,7 @@ import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, Form, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -87,6 +87,37 @@ def create_app() -> FastAPI:
             "version": __version__,
             "base": base.pinned_info(),
         }
+
+    # ---------------- 数据集路由（T1 接入） ----------------
+    @app.get("/api/datasets", tags=["datasets"])
+    async def list_datasets():
+        return db.list_datasets()
+
+    @app.get("/api/datasets/{dataset_id}", tags=["datasets"])
+    async def get_dataset(dataset_id: str):
+        ds = db.get_dataset(dataset_id)
+        if ds is None:
+            return JSONResponse({"detail": "dataset not found"}, status_code=404)
+        return ds
+
+    @app.post("/api/datasets", tags=["datasets"])
+    async def create_dataset(name: str = Form(...), files: list[UploadFile] = File(...)):
+        """上传一个或多个文件 → 接入（哈希去重，重复秒回既有 dataset）。"""
+        from tunefield.pipeline.ingest import file_sha256, set_fingerprint, ingest_files
+
+        if not files:
+            return JSONResponse({"detail": "no files"}, status_code=400)
+        # 合并加密文件校验（Multiple-file upload 下 FastAPI 保证列表非空）
+        if name.strip() == "":
+            return JSONResponse({"detail": "name required"}, status_code=400)
+
+        contents = [(f.filename, await f.read()) for f in files]
+        fp = set_fingerprint([file_sha256(b) for _, b in contents])
+        existed = db.get_dataset_by_hash(fp)
+        if existed is not None:
+            return {"dataset": existed, "deduped": True}
+        ds = ingest_files(contents, name=name.strip(), source="upload")
+        return {"dataset": ds, "deduped": False}
 
     # ---------------- 任务占位路由（后续按 F2/API 契约补齐） ----------------
     @app.get("/api/jobs", tags=["jobs"])

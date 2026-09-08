@@ -31,6 +31,25 @@ _PLANNED = {
 }
 
 
+def _ingest(args: argparse.Namespace) -> int:
+    """T1：通用接入（目录/文件/zip）→ 哈希去重 → raw 落盘并登记 dataset。"""
+    from tunefield.pipeline.ingest import ingest_path
+
+    try:
+        ds = ingest_path(args.path, name=args.name)
+    except FileNotFoundError as exc:
+        print(f"[ingest] 失败：{exc}")
+        return 1
+    except ValueError as exc:
+        print(f"[ingest] 失败：{exc}")
+        return 1
+
+    print(f"[ingest] dataset id：{ds['id']}")
+    print(f"[ingest] 名称：{ds['name']} · 指纹：{ds['content_hash'][:12]}…")
+    print(f"[ingest] 状态：{ds['status']} · 时间：{ds['created_at']}")
+    return 0
+
+
 def _serve(args: argparse.Namespace) -> int:
     """F1：启动 Web 平台（FastAPI + 内嵌队列 + 前端静态托管）。"""
     from tunefield.serve.app import create_app
@@ -88,9 +107,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", metavar="<command>")
 
     p = sub.add_parser("ingest", help="接入数据：解析 + 哈希去重入库")
-    p.add_argument("path", help="数据目录或文件路径（支持 zip 混合包）")
+    p.add_argument("path", help="数据目录、单文件或 zip 混合包")
     p.add_argument("--name", required=True, help="领域名称")
-    p.set_defaults(func=_make_stub("ingest"))
+    p.set_defaults(func=_ingest)
 
     p = sub.add_parser("build", help="运行数据管线并产出质检报告")
     p.add_argument("dataset", help="dataset id 或名称")

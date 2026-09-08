@@ -171,3 +171,48 @@ def jobs_by_status(statuses: Sequence[str]) -> list[dict[str, Any]]:
             list(statuses),
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# 数据集访问层（T1 接入）
+# ---------------------------------------------------------------------------
+
+
+def insert_dataset(
+    *, id: str, name: str, content_hash: str, source: str | None,
+    stats_json: str | None,
+) -> dict[str, Any]:
+    with transaction() as conn:
+        conn.execute(
+            "INSERT INTO datasets (id, name, content_hash, source, status, stats_json, created_at) "
+            "VALUES (?,?,?,?,?,?, strftime('%Y-%m-%dT%H:%M:%SZ','now'))",
+            (id, name, content_hash, source, "ingested", stats_json),
+        )
+        row = conn.execute(
+            "SELECT * FROM datasets WHERE id = ?", (id,)
+        ).fetchone()
+    return dict(row) if row else {}
+
+
+def get_dataset(dataset_id: str) -> dict[str, Any] | None:
+    with transaction() as conn:
+        row = conn.execute(
+            "SELECT * FROM datasets WHERE id = ?", (dataset_id,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def get_dataset_by_hash(content_hash: str) -> dict[str, Any] | None:
+    with transaction() as conn:
+        row = conn.execute(
+            "SELECT * FROM datasets WHERE content_hash = ?", (content_hash,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def list_datasets() -> list[dict[str, Any]]:
+    with transaction() as conn:
+        rows = conn.execute(
+            "SELECT * FROM datasets ORDER BY created_at"
+        ).fetchall()
+    return [dict(r) for r in rows]

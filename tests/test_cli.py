@@ -46,9 +46,18 @@ def test_no_command_prints_help() -> None:
 
 
 def test_stub_reports_not_implemented() -> None:
-    result = _run_cli("ingest", "some/path", "--name", "demo")
+    # build 仍是 stub（管线 T2+ 交付），应提示尚未实现
+    result = _run_cli("build", "some-dataset")
     assert result.returncode == 1
     assert "尚未实现" in result.stdout
+
+
+def test_ingest_is_real_command() -> None:
+    # T1 起 ingest 已是真实命令：路径不存在时返回接入失败，而非"尚未实现"
+    result = _run_cli("ingest", "some/path", "--name", "demo")
+    assert result.returncode == 1
+    assert "尚未实现" not in result.stdout
+    assert "失败" in result.stdout
 
 
 def test_version() -> None:

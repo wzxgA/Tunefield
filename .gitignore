@@ -27,3 +27,9 @@ models/gguf/*
 
 # 环境与锁文件产物
 .DS_Store
+*.log
+
+# 临时 / 验收样例（勿入库）
+*.tmp
+demo-data/
+temp/
