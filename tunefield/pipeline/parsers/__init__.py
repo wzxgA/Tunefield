@@ -122,14 +122,20 @@ def _preview(result: dict, limit: int = 600) -> str:
     return text
 
 
-def scan_dataset_files(dataset: dict, *, preview_chars: int = 600) -> list[dict]:
+def scan_dataset_files(
+    dataset: dict, *, preview_chars: int = 600, with_clean: bool = True
+) -> list[dict]:
     """对 data/raw/<content_hash> 逐文件解析，返回逐文件状态与预览列表。
 
     dataset 需含 content_hash（tunefield.serve.db 返回的记录即满足）。
+    with_clean=True 时附加 T3 清洗摘要：
+    {before_chars, after_chars, removed_chars, rules, preview}。
     """
     root = config.RAW_DIR / dataset["content_hash"]
     if not root.exists():
         return []
+
+    from tunefield.pipeline.cleaning import clean_segments
 
     files: list[dict] = []
     for path in sorted(root.rglob("*")):
@@ -138,6 +144,16 @@ def scan_dataset_files(dataset: dict, *, preview_chars: int = 600) -> list[dict]
         rel = path.relative_to(root).as_posix()
         data = path.read_bytes()
         r = parse_bytes(rel, data)
+        clean = None
+        if with_clean and r["status"] == "ok" and r["segments"]:
+            c = clean_segments(r["segments"])
+            clean = {
+                "before_chars": c["before_chars"],
+                "after_chars": c["after_chars"],
+                "removed_chars": c["before_chars"] - c["after_chars"],
+                "rules": {k: v for k, v in c["stats"].items() if v > 0},
+                "preview": _preview({"segments": c["segments"]}, preview_chars),
+            }
         files.append(
             {
                 "name": rel,
@@ -148,6 +164,7 @@ def scan_dataset_files(dataset: dict, *, preview_chars: int = 600) -> list[dict]
                 "chars": r["chars"],
                 "blocks": r["blocks"],
                 "preview": _preview(r, preview_chars),
+                "clean": clean,
             }
         )
     return files

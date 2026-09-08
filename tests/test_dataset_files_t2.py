@@ -58,8 +58,17 @@ def test_dataset_files_after_upload():
         assert files["b.txt"]["status"] == "ok"
         assert "正文内容" in files["b.txt"]["preview"]
 
+        # T3 清洗摘要：字段齐全，字数差异自洽
+        clean = files["b.txt"]["clean"]
+        assert clean is not None
+        assert clean["removed_chars"] == clean["before_chars"] - clean["after_chars"]
+        assert set(clean["rules"]) <= {
+            "invisible", "space", "fullwidth", "html", "page", "boiler",
+        }
+
         assert files["c.bin"]["status"] == "unsupported"
         assert files["c.bin"]["preview"] == ""
+        assert files["c.bin"]["clean"] is None
 
         # 数据集归属正确
         assert fr.json()["dataset"]["id"] == dataset["id"]

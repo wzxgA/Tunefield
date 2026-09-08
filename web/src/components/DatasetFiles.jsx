@@ -11,6 +11,16 @@ const STATUS_LABEL = {
   unsupported: "不支持",
 };
 
+// 与后端 cleaning.RULE_LABELS 对应的展示名
+const RULE_LABELS = {
+  invisible: "控制字符",
+  space: "全角空格",
+  fullwidth: "全半角",
+  html: "HTML",
+  page: "页码行",
+  boiler: "页眉页脚",
+};
+
 export default function DatasetFiles({ datasetId }) {
   const [state, setState] = useState({
     loading: true,
@@ -85,8 +95,39 @@ export default function DatasetFiles({ datasetId }) {
             {f.status !== "ok" && f.error && (
               <div className="pf-error">{f.error}</div>
             )}
-            {open[f.name] && f.preview && (
-              <pre className="pf-preview">{f.preview}</pre>
+            {open[f.name] && (
+              <div className="pf-detail">
+                {f.preview && (
+                  <>
+                    <div className="pf-label">中间文本（解析后）</div>
+                    <pre className="pf-preview">{f.preview}</pre>
+                  </>
+                )}
+                {f.clean && (
+                  <div className="pf-clean">
+                    <div className="pf-clean-head">
+                      <span className="pf-label">清洗</span>
+                      {f.clean.removed_chars > 0 ? (
+                        <>
+                          <span className="pf-clean-diff">
+                            移除 {f.clean.removed_chars} 字
+                          </span>
+                          {Object.entries(f.clean.rules).map(([k, n]) => (
+                            <span key={k} className="pf-rule">
+                              {RULE_LABELS[k] || k} ×{n}
+                            </span>
+                          ))}
+                        </>
+                      ) : (
+                        <span className="pf-clean-none">无需清洗</span>
+                      )}
+                    </div>
+                    {f.clean.removed_chars > 0 && f.clean.preview && (
+                      <pre className="pf-preview">{f.clean.preview}</pre>
+                    )}
+                  </div>
+                )}
+              </div>
             )}
           </div>
         ))}

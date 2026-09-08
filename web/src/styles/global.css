@@ -746,3 +746,46 @@ body {
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+/* ===== T3 清洗预览（清洗前后 + 命中规则） ===== */
+
+.pf-detail {
+  padding-bottom: var(--gap-sm);
+}
+
+.pf-label {
+  padding: 0 10px 2px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.pf-clean {
+  margin-top: var(--gap-sm);
+}
+
+.pf-clean-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--gap-sm);
+  margin-bottom: 2px;
+}
+
+.pf-clean-diff {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent-text);
+}
+
+.pf-clean-none {
+  font-size: 12px;
+  color: var(--ok);
+}
+
+.pf-rule {
+  padding: 0 8px;
+  border-radius: 8px;
+  background: var(--card-muted);
+  color: var(--text-muted);
+  font-size: 11px;
+}
