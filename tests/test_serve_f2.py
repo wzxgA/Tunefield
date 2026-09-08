@@ -27,13 +27,40 @@ def _isolated_root(tmp_path_factory):
     os.environ.pop("TUNEFIELD_ROOT", None)
 
 
+def _upload_dataset(client) -> str:
+    r = client.post(
+        "/api/datasets",
+        data={"name": "aws"},
+        files=[("files", ("a.txt", "事件流演示内容。\n".encode("utf-8"), "text/plain"))],
+    )
+    assert r.status_code == 200
+    return r.json()["dataset"]["id"]
+
+
+async def _fake_handler(job_id: str) -> None:
+    """假引擎：模拟 loss 采样并广播事件，专测 WS 事件流。"""
+    import asyncio
+
+    from tunefield.serve import db, events
+    from tunefield.serve.queue import set_status
+
+    set_status(job_id, "running", progress=0.1)
+    await asyncio.sleep(0.01)
+    set_status(job_id, "running", progress=0.5)
+    for step, value in ((1, 0.9), (2, 0.7)):
+        db.append_loss(job_id, f"[{step},{value}]")
+        events.hub.publish("job.loss", {"id": job_id, "step": step, "value": value})
+    await asyncio.sleep(0.01)
+
+
 def test_events_stream_full_job_lifecycle():
     """订阅 WS → 创建任务 → 依次收到 created/status/loss，直到 done。"""
     from tunefield.serve.app import create_app
 
-    with TestClient(create_app()) as c:
+    with TestClient(create_app(handler=_fake_handler)) as c:
         with c.websocket_connect("/api/events") as ws:
-            r = c.post("/api/jobs", json={"domain": "aws", "kind": "finetune"})
+            dataset_id = _upload_dataset(c)
+            r = c.post("/api/jobs", json={"dataset_id": dataset_id, "domain": "aws", "kind": "finetune"})
             assert r.status_code == 200
             job_id = r.json()["id"]
 

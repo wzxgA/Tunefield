@@ -130,3 +130,197 @@ def smoke(
         "prompt": prompt,
         "output": text,
     }
+
+
+# ---------------------------------------------------------------------------
+# T7 · 训练引擎抽象层（多后端可插拔）
+#
+# 引擎必须实现 prepare()（产出子进程命令与工作目录内配置），run() 在基类实现：
+# 逐行读取 stdout 采样 loss/epoch → 落库 + 广播；异常退出自动重试一次（续跑）；
+# 断点续训：同一 job 目录出现 checkpoint 即自动追加 resume 参数。
+# 真实 GPU 训练由子进程承担，主进程不加载 CUDA 上下文。
+# ---------------------------------------------------------------------------
+
+import re
+import subprocess
+import threading
+from collections import defaultdict, deque
+
+# 事件类型（前端订阅契约）：
+#   job.log    {id, line}        训练日志行（增量流）
+#   job.stage  {id, stage, msg}  阶段提示（断点/重试等）
+# 其余沿用 F1/F2：job.status / job.loss / job.created
+
+_log_lock = threading.Lock()
+_log_rings: dict[str, deque[str]] = defaultdict(lambda: deque(maxlen=1200))
+
+
+def log_append(job_id: str, line: str) -> None:
+    with _log_lock:
+        _log_rings[job_id].append(line)
+
+
+def log_tail(job_id: str, limit: int = 120) -> list[str]:
+    with _log_lock:
+        ring = _log_rings.get(job_id)
+        if not ring:
+            return []
+        return list(ring)[-limit:]
+
+
+# LLaMA-Factory / HF Trainer 常见日志形态（容错解析，失败不影响训练）
+_LOSS_RE = [
+    re.compile(r"['\"]loss['\"]\s*:\s*([0-9]+\.?[0-9]*(?:e[-+]?[0-9]+)?)", re.IGNORECASE),
+    re.compile(r"\bloss\s*[:=]\s*([0-9]+\.?[0-9]*(?:e[-+]?[0-9]+)?)", re.IGNORECASE),
+]
+_EPOCH_RE = re.compile(r"['\"]epoch['\"]\s*:\s*([0-9]+\.?[0-9]*)", re.IGNORECASE)
+_STEP_RE = re.compile(r"['\"]step['\"]\s*:\s*(\d+)", re.IGNORECASE)
+_OOM_RE = re.compile(r"out of memory|CUDA out of memory|OOM", re.IGNORECASE)
+
+
+def parse_train_line(line: str) -> dict | None:
+    """从一行训练日志采样 loss/epoch/step；无采样返回 None。"""
+    loss = None
+    for pat in _LOSS_RE:
+        m = pat.search(line)
+        if m:
+            loss = float(m.group(1))
+            break
+    if loss is None:
+        return None
+    out: dict = {"loss": loss}
+    m = _EPOCH_RE.search(line)
+    if m:
+        out["epoch"] = float(m.group(1))
+    m = _STEP_RE.search(line)
+    if m:
+        out["step"] = int(m.group(1))
+    return out
+
+
+class EngineError(Exception):
+    """引擎失败（消息面向用户，含可读原因）。"""
+
+
+class EngineNotFound(EngineError):
+    """kind 没有注册对应引擎（如引擎 B 待 T13 接入）。"""
+
+
+def _latest_checkpoint(workdir) -> str | None:
+    if not workdir.is_dir():
+        return None
+    cps = [d for d in workdir.glob("checkpoint-*") if d.is_dir()]
+    if not cps:
+        return None
+    return str(sorted(cps, key=lambda p: p.stat().st_mtime)[-1])
+
+
+def _publish(loop, event: str, data: dict) -> None:
+    """把事件安全地投递到主事件循环；无 loop（CLI/测试直跑）时仅落库。"""
+    from tunefield.serve import events
+
+    events.hub.publish_threadsafe(loop, event, data) if loop is not None else None
+
+
+class BaseEngine:
+    """引擎基类：子类实现 kind/label/prepare()；run() 统一承担日志监控与推进。"""
+
+    kind: str = ""
+    label: str = ""
+    default_cfg: dict = {}  # 子类提供的推荐默认参数（会被 config_json 覆盖）
+
+    def prepare(self, job: dict, dataset: dict, cfg: dict, workdir, resume: str | None) -> list[str]:
+        """生成训练子进程命令（可写工作目录配置）；必须由子类实现。"""
+        raise NotImplementedError
+
+    # ------------------------------------------------------------------
+    def run(self, job: dict, dataset: dict, cfg: dict, *, loop=None, cmd: list[str] | None = None) -> dict:
+        """执行训练并推进进度/loss/日志。
+
+        cmd 参数供测试/调试注入伪造命令；生产路径为 None（由 prepare 生成）。
+        失败时：自动重试一次（二次失败抛 EngineError，附退出码与日志尾部）。
+        """
+        from tunefield import config as _config
+        from tunefield.serve import db
+
+        cfg = {**self.default_cfg, **(cfg or {})}  # 推荐值 + 用户覆盖
+        job_id = job["id"]
+        domain = (job.get("domain") or dataset.get("name") or "model")
+        workdir = _config.ADAPTERS_DIR / domain / job_id
+        workdir.mkdir(parents=True, exist_ok=True)
+
+        epochs = int(cfg.get("epochs") or cfg.get("num_train_epochs") or 1)
+        step_counter = [0]
+        last_published_pct = [-1.0]
+
+        def on_line(line: str) -> None:
+            log_append(job_id, line)
+            _publish(loop, "job.log", {"id": job_id, "line": line})
+            sample = parse_train_line(line)
+            if sample is None:
+                return
+            step = sample.get("step") or (step_counter[0] + 1)
+            step_counter[0] = step
+            db.append_loss(job_id, f"[{step},{sample['loss']}]")
+            _publish(loop, "job.loss", {"id": job_id, "step": step, "value": sample["loss"]})
+            epoch = sample.get("epoch")
+            if epoch is not None:
+                progress = max(0.0, min(1.0, epoch / epochs))
+                pct = int(progress * 100)
+                if pct != last_published_pct[0]:
+                    last_published_pct[0] = pct
+                    db.set_job_status(job_id, "running", progress=progress)
+                    _publish(loop, "job.status",
+                             {"id": job_id, "status": "running", "progress": progress})
+
+        def fire_stage(msg: str) -> None:
+            log_append(job_id, msg)
+            _publish(loop, "job.log", {"id": job_id, "line": msg})
+
+        attempt = 1
+        while True:
+            resume = _latest_checkpoint(workdir)
+            argv = list(cmd) if cmd is not None else self.prepare(
+                job, dataset, cfg, workdir, resume)
+            if resume and cmd is None:
+                fire_stage(f"[engine] 检测到断点 {resume}，自动续训…")
+            fire_stage(f"[engine] {self.label} 启动（{argv[0]}）")
+
+            try:
+                proc = subprocess.Popen(
+                    argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                    text=True, encoding="utf-8", errors="replace",
+                    bufsize=1, cwd=str(workdir),
+                )
+            except FileNotFoundError as exc:
+                raise EngineError(
+                    f"无法启动训练程序 {argv[0]!r}：{exc}. 请安装依赖或设置 "
+                    "TUNEFIELD_LLAMAFACTORY_BIN 环境变量（参见 README）。"
+                ) from exc
+
+            # 按块读取 + 自建行缓冲：管道块缓冲下 readline 会把整段输出并成一行，
+            # 导致 loss/epoch 只取到第一行，实时进度失真。
+            buf = ""
+            while True:
+                chunk = proc.stdout.read(65536)
+                if not chunk:
+                    break
+                buf += chunk
+                while "\n" in buf:
+                    line, buf = buf.split("\n", 1)
+                    if line.strip():
+                        on_line(line.rstrip("\r"))
+            if buf.strip():
+                on_line(buf.rstrip("\r"))
+            rc = proc.wait()
+
+            if rc == 0:
+                return {"job_id": job_id, "workdir": str(workdir),
+                        "epochs": epochs, "retried": attempt > 1}
+
+            tail = "\n".join(log_tail(job_id, 25))
+            if attempt == 1:
+                fire_stage("[engine] 进程异常退出，自动重试一次（断点续训）…")
+                attempt = 2
+                continue
+            raise EngineError(f"训练进程退出码 {rc}。最近日志：\n{tail}")

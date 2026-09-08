@@ -10,10 +10,35 @@ import os
 import subprocess
 import sys
 
+import asyncio
+
 import pytest
 from fastapi.testclient import TestClient
 
 TEST_ROOT = os.path.join(os.path.dirname(__file__), "_tmp_f1")
+
+
+async def _fake_handler(job_id: str) -> None:
+    """假引擎：模拟 running → loss 采样 → 完成，专测队列/状态机/落库链路。"""
+    from tunefield.serve import db
+    from tunefield.serve.queue import set_status
+
+    set_status(job_id, "running", progress=0.1)
+    await asyncio.sleep(0.01)
+    set_status(job_id, "running", progress=0.5)
+    for step, value in ((1, 0.9), (2, 0.7)):
+        db.append_loss(job_id, f"[{step},{value}]")
+    await asyncio.sleep(0.01)
+
+
+def _upload_dataset(client) -> str:
+    r = client.post(
+        "/api/datasets",
+        data={"name": "aws"},
+        files=[("files", ("a.txt", "微调演示内容。\n".encode("utf-8"), "text/plain"))],
+    )
+    assert r.status_code == 200
+    return r.json()["dataset"]["id"]
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -55,11 +80,12 @@ def test_init_db_is_idempotent_and_creates_tables():
 
 
 def test_create_job_flow_queued_to_done():
-    """占位 handler 驱动：queued → running → done，且 loss 落库。"""
+    """假引擎驱动状态机：queued → running → done，且 loss 落库（队列/状态机单测）。"""
     from tunefield.serve.app import create_app
 
-    with TestClient(create_app()) as c:
-        r = c.post("/api/jobs", json={"domain": "aws", "kind": "finetune"})
+    with TestClient(create_app(handler=_fake_handler)) as c:
+        dataset_id = _upload_dataset(c)
+        r = c.post("/api/jobs", json={"dataset_id": dataset_id, "domain": "aws", "kind": "finetune"})
         assert r.status_code == 200
         job_id = r.json()["id"]
         assert r.json()["status"] == "queued"

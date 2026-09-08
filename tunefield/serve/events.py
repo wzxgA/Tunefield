@@ -46,6 +46,16 @@ class EventHub:
             return  # 无事件循环（如同步 CLI 上下文）时丢弃
         loop.create_task(self._broadcast(event, data))
 
+    def publish_threadsafe(self, loop: asyncio.AbstractEventLoop, event: str, data: dict) -> None:
+        """T7：从子进程监控线程发布事件（run_coroutine_threadsafe，不阻塞主循环）。"""
+        if not self._clients:
+            return
+        try:
+            fut = asyncio.run_coroutine_threadsafe(self._broadcast(event, data), loop)
+            fut.add_done_callback(lambda f: f.exception() if not f.cancelled() else None)
+        except (RuntimeError, Exception):  # noqa: BLE001 - 事件发布失败不应影响训练
+            return
+
     async def _broadcast(self, event: str, data: dict) -> None:
         message = json.dumps({"type": event, "data": data}, ensure_ascii=False)
         for ws in list(self._clients):

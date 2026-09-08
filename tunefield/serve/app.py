@@ -8,8 +8,6 @@
 
 from __future__ import annotations
 
-import asyncio
-import datetime
 import logging
 import secrets
 from contextlib import asynccontextmanager
@@ -24,7 +22,7 @@ from starlette.concurrency import run_in_threadpool
 from tunefield import __version__
 from tunefield.config import WEB_DIST_DIR, ensure_dirs
 from tunefield.serve import db, events
-from tunefield.serve.queue import JobQueue, set_status
+from tunefield.serve.queue import JobQueue
 
 logger = logging.getLogger(__name__)
 
@@ -38,25 +36,19 @@ def _new_id() -> str:
     return secrets.token_hex(8)
 
 
-async def _placeholder_handler(job_id: str) -> None:
-    """F1 占位 handler：模拟任务推进到完成，供队列/状态机/事件流闭环联调。
+def create_app(handler=None) -> FastAPI:
+    """应用工厂。
 
-    真实引擎编排（解析→训练→导出）由 T7/T13 替换实现。
+    handler：队列任务处理函数（async job_id -> None）。默认使用真实训练编排
+    （T7 引擎 A 微调）；测试可注入假 handler 单独验证队列/状态机/事件流。
     """
-    set_status(job_id, "running", progress=0.1)
-    await asyncio.sleep(1.0)
-    set_status(job_id, "running", progress=0.5)
-    # 追加 loss 采样点占位，验证 loss 落库与推送链路
-    for step, value in ((1, 0.9), (2, 0.7)):
-        db.append_loss(job_id, f"[{step},{value}]")
-        events.hub.publish("job.loss", {"id": job_id, "step": step, "value": value})
-    await asyncio.sleep(1.0)
-
-
-def create_app() -> FastAPI:
     db.init_db()
 
-    queue: JobQueue = JobQueue(handler=_placeholder_handler)
+    if handler is None:
+        from tunefield.engine.dispatch import create_train_handler
+
+        handler = create_train_handler()
+    queue: JobQueue = JobQueue(handler=handler)
 
     @asynccontextmanager
     async def _lifespan(_app: FastAPI):
@@ -173,7 +165,7 @@ def create_app() -> FastAPI:
         ds = ingest_files(contents, name=name.strip(), source="upload")
         return {"dataset": ds, "deduped": False}
 
-    # ---------------- 任务占位路由（后续按 F2/API 契约补齐） ----------------
+    # ---------------- 任务路由（T7 起接真实引擎编排） ----------------
     @app.get("/api/jobs", tags=["jobs"])
     async def list_jobs():
         return db.list_jobs()
@@ -183,25 +175,46 @@ def create_app() -> FastAPI:
         job = db.get_job(job_id)
         if job is None:
             return JSONResponse({"detail": "job not found"}, status_code=404)
+        from tunefield.engine.base import log_tail
+
+        job["log"] = log_tail(job_id, 120)  # 进程内日志尾部（重启后为空，仅恢复展示）
         return job
 
     @app.post("/api/jobs", tags=["jobs"])
     async def create_job(body: dict):
+        import json as _json
+
+        kind = body.get("kind", "finetune")
+        if kind == "pretrain":
+            return JSONResponse(
+                {"detail": "从零预训练引擎（kind=pretrain）将在 T13 接入，当前仅支持微调 finetune"},
+                status_code=400,
+            )
+        dataset_id = body.get("dataset_id")
+        dataset = db.get_dataset(dataset_id) if dataset_id else None
+        if dataset is None:
+            return JSONResponse(
+                {"detail": "缺少 dataset_id 或数据集不存在：请先上传并构建数据集"},
+                status_code=400,
+            )
+        domain = (body.get("domain") or dataset["name"] or "default").strip()
+        overrides = body.get("overrides") if isinstance(body.get("overrides"), dict) else {}
+        cfg = {k: v for k, v in overrides.items() if v is not None}
+
         job_id = _new_id()
         db.insert_job(
             job_id=job_id,
-            dataset_id=body.get("dataset_id"),
-            domain=body.get("domain", "default"),
-            kind=body.get("kind", "finetune"),
-            base_model=body.get("base"),
-            config_json=None,
+            dataset_id=dataset_id,
+            domain=domain,
+            kind=kind,
+            base_model=body.get("base") or None,
+            config_json=_json.dumps(cfg, ensure_ascii=False) if cfg else None,
             status="queued",
             created_at=_now_iso(),
         )
         events.hub.publish(
             "job.created",
-            {"id": job_id, "domain": body.get("domain", "default"),
-             "kind": body.get("kind", "finetune"), "status": "queued"},
+            {"id": job_id, "domain": domain, "kind": kind, "status": "queued"},
         )
         queue.enqueue(job_id)
         return db.get_job(job_id)

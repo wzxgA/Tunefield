@@ -92,10 +92,9 @@ class JobQueue:
                 self.queue.task_done()
 
     async def _run_one(self, job_id: str) -> None:
-        # GPU 预检（钩子）：真实显存探测随 T7 接入；此处默认通过。
+        # GPU 预检：显存余量不足置 pending_gpu 延时重查
         if not await self._gpu_available():
-            set_status(job_id, "pending_gpu")
-            # 延时后重新入队继续尝试
+            set_status(job_id, "pending_gpu", error="GPU 显存余量不足，等待释放后重试")
             await asyncio.sleep(self.gpu_poll_interval)
             self.queue.put_nowait(job_id)
             return
@@ -110,8 +109,19 @@ class JobQueue:
             set_status(job_id, "failed", error=str(exc))
 
     async def _gpu_available(self) -> bool:
-        """GPU 预检钩子。F1 默认恒 True；T7 接入 torch.cuda 显存/占用探测。"""
-        return True
+        """GPU 预检：torch 缺席（纯开发/未装训练依赖）时不设闸放行；
+        已装则要求 CUDA 可用且显存余量 ≥ 3GB（8GB 卡的宽松门槛）。"""
+        try:
+            import torch
+        except Exception:
+            return True  # 无 torch 的训练环境由引擎报错给出明确指引
+        if not torch.cuda.is_available():
+            return False
+        try:
+            free, _total = torch.cuda.mem_get_info()
+            return free / (1024**3) >= 3.0
+        except Exception:
+            return True  # 探测异常不误拦，交由训练引擎处理
 
 
 # 模块级默认：供 app 创建。handler 由上层注入。
