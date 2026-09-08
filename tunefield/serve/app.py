@@ -1,0 +1,139 @@
+"""FastAPI 应用工厂 + 静态托管 + 基础路由。
+
+对齐方案 B6 F1：
+- 一个 uvicorn 进程承载 API、内嵌训练队列、前端静态托管；
+- StaticFiles 托管 web/dist（构建产物）；
+- 提供健康检查 / 元信息 / 任务占位接口，供前端联调通路。
+"""
+
+from __future__ import annotations
+
+import asyncio
+import datetime
+import logging
+import secrets
+from contextlib import asynccontextmanager
+from pathlib import Path
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+
+from tunefield import __version__
+from tunefield.config import WEB_DIST_DIR, ensure_dirs
+from tunefield.serve import db
+from tunefield.serve.queue import JobQueue
+
+logger = logging.getLogger(__name__)
+
+
+def _now_iso() -> str:
+    import datetime
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _new_id() -> str:
+    return secrets.token_hex(8)
+
+
+async def _placeholder_handler(job_id: str) -> None:
+    """F1 占位 handler：模拟任务推进到完成，供队列/状态机闭环联调。
+
+    真实引擎编排（解析→训练→导出）由 T7/T13 替换实现。
+    """
+    db.set_job_status(job_id, "running", progress=0.1)
+    await asyncio.sleep(1.0)
+    db.set_job_status(job_id, "running", progress=0.5)
+    # 追加 loss 采样点占位，验证 loss 落库链路
+    db.append_loss(job_id, "[1,0.9]")
+    db.append_loss(job_id, "[2,0.7]")
+    await asyncio.sleep(1.0)
+
+
+def create_app() -> FastAPI:
+    db.init_db()
+
+    queue: JobQueue = JobQueue(handler=_placeholder_handler)
+
+    @asynccontextmanager
+    async def _lifespan(_app: FastAPI):
+        await queue.start()
+        yield
+        await queue.stop()
+
+    app = FastAPI(title="Tunefield", version=__version__, lifespan=_lifespan)
+
+    # Vite dev 跨端口调试用（同源部署不影响）
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    # ---------------- 基础路由 ----------------
+    @app.get("/api/health", tags=["system"])
+    async def health() -> dict:
+        return {"status": "ok", "version": __version__}
+
+    @app.get("/api/meta", tags=["system"])
+    async def meta() -> dict:
+        return {"name": "Tunefield", "version": __version__}
+
+    # ---------------- 任务占位路由（后续按 F2/API 契约补齐） ----------------
+    @app.get("/api/jobs", tags=["jobs"])
+    async def list_jobs():
+        return db.list_jobs()
+
+    @app.get("/api/jobs/{job_id}", tags=["jobs"])
+    async def get_job(job_id: str):
+        job = db.get_job(job_id)
+        if job is None:
+            return JSONResponse({"detail": "job not found"}, status_code=404)
+        return job
+
+    @app.post("/api/jobs", tags=["jobs"])
+    async def create_job(body: dict):
+        job_id = _new_id()
+        db.insert_job(
+            job_id=job_id,
+            dataset_id=body.get("dataset_id"),
+            domain=body.get("domain", "default"),
+            kind=body.get("kind", "finetune"),
+            base_model=body.get("base"),
+            config_json=None,
+            status="queued",
+            created_at=_now_iso(),
+        )
+        queue.enqueue(job_id)
+        return db.get_job(job_id)
+
+    # ---------------- 静态托管（放最后，避免吞掉 API 路由） ----------------
+    _mount_static(app)
+
+    app.state.queue = queue
+    return app
+
+
+def _mount_static(app: FastAPI) -> None:
+    ensure_dirs()
+    dist = Path(WEB_DIST_DIR)
+    if not dist.exists():
+        logger.warning(
+            "未找到前端构建产物 %s，/ 与静态资源不可用；请先在 web/ 执行 npm run build", dist
+        )
+        return
+
+    app.mount("/assets", StaticFiles(directory=dist / "assets"), name="assets")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def _spa(full_path: str):
+        target = (dist / full_path).resolve()
+        if (
+            full_path
+            and target.is_file()
+            and str(target).startswith(str(dist.resolve()))
+        ):
+            return FileResponse(target)
+        return FileResponse(dist / "index.html")  # SPA 回退

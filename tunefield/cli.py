@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import argparse
 
+import uvicorn
+
 from tunefield import __version__
 
 # 各空命令的交付位置，用于提示与排期对照
@@ -27,6 +29,21 @@ _PLANNED = {
     "run": "T11（端到端一键串联 + 自动降级链）",
     "serve": "F1（FastAPI 骨架 + 内嵌队列 + 前端托管）",
 }
+
+
+def _serve(args: argparse.Namespace) -> int:
+    """F1：启动 Web 平台（FastAPI + 内嵌队列 + 前端静态托管）。"""
+    from tunefield.serve.app import create_app
+
+    app = create_app()
+    uvicorn.run(
+        app,
+        host=args.host,
+        port=args.port,
+        reload=args.reload,
+        log_level="info",
+    )
+    return 0
 
 
 def _make_stub(command: str):
@@ -98,7 +115,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--host", default="127.0.0.1", help="监听地址，默认 127.0.0.1")
     p.add_argument("--port", type=int, default=8000, help="监听端口，默认 8000")
     p.add_argument("--reload", action="store_true", help="开发模式热重载")
-    p.set_defaults(func=_make_stub("serve"))
+    p.set_defaults(func=_serve)
 
     return parser
 
