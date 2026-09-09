@@ -354,7 +354,21 @@ def create_app(handler=None) -> FastAPI:
                 {"detail": "stream=true 将在 P1 提供,当前请使用 stream=false"},
                 status_code=400,
             )
+        # T13：预训练(base)模型走原生 /api/generate 纯续写，绕开 Ollama chat
+        # 模板的严格输出校验（peg-native format 报错源）；微调模型照常 chat。
+        base = False
+        if isinstance(payload.get("model"), str) and payload["model"]:
+            from tunefield.assets import registry as _registry
+            from tunefield.serve import db as _db
+
+            for _m in _registry.list_gguf_models():
+                if _m.get("ollama_name") == payload["model"]:
+                    _job = _db.get_job(_m.get("job_id") or "")
+                    base = bool(_job and _job.get("kind") == "pretrain")
+                    break
         try:
+            if base:
+                return await run_in_threadpool(ollama.raw_completion_openai, payload)
             return await run_in_threadpool(ollama.chat_completions, payload)
         except EngineError as exc:
             return JSONResponse({"detail": str(exc)}, status_code=502)

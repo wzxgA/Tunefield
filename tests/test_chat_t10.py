@@ -152,6 +152,66 @@ def test_remove_model_idempotent_and_command(monkeypatch, tmp_path):
     assert ollama.remove_model("tunefield-demo-x")["removed"] is False
 
 
+def test_raw_completion_for_pretrain_model(monkeypatch):
+    from tunefield.engine.base import EngineError
+    from tunefield.serve import ollama
+
+    captured = {}
+
+    def fake_post(path, payload, timeout=300.0):
+        captured["path"] = path
+        captured["payload"] = payload
+        return {"response": "续写文本继续…", "done": True}
+
+    monkeypatch.setattr(ollama, "_post_json", fake_post)
+    out = ollama.raw_completion_openai({
+        "model": "tunefield-pre-abc",
+        "messages": [{"role": "user", "content": "你好"}],
+        "temperature": 0.7, "top_p": 0.9,
+    })
+    assert captured["path"] == "/api/generate"
+    assert captured["payload"]["prompt"] == "用户: 你好"
+    assert captured["payload"]["options"]["temperature"] == 0.7
+    assert out["choices"][0]["message"]["content"] == "续写文本继续…"
+    # 无 messages → 报错而非转发
+    with pytest.raises(EngineError):
+        ollama.raw_completion_openai({"model": "m", "messages": []})
+
+
+def test_chat_api_routes_base_model_to_raw_generate(monkeypatch):
+    from tunefield.assets import registry as asset_registry
+    from tunefield.engine.base import EngineError
+    from tunefield.serve import db, ollama
+    from tunefield.serve.app import create_app
+
+    db.insert_job(job_id="job-base-x", dataset_id=None, domain="pre",
+                  kind="pretrain", base_model=None, config_json=None,
+                  status="done", created_at="2026-01-01T00:00:00Z")
+    monkeypatch.setattr(
+        asset_registry, "list_gguf_models",
+        lambda: [{"ollama_name": "tunefield-pre-x", "job_id": "job-base-x",
+                  "path": "/x", "quant": "q4_k_m"}],
+    )
+
+    def _raise_chat(payload, timeout=300.0):
+        raise EngineError("chat 通道不应被 base 模型调用")
+
+    monkeypatch.setattr(ollama, "chat_completions", _raise_chat)
+    monkeypatch.setattr(
+        ollama, "raw_completion_openai",
+        lambda payload, timeout=300.0: {
+            "choices": [{"message": {"role": "assistant",
+                                     "content": "base 续写输出"}}]},
+    )
+    with TestClient(create_app()) as c:
+        r = c.post("/v1/chat/completions", json={
+            "model": "tunefield-pre-x",
+            "messages": [{"role": "user", "content": "你好"}],
+        })
+        assert r.status_code == 200
+        assert r.json()["choices"][0]["message"]["content"] == "base 续写输出"
+
+
 def test_remove_imported_api(monkeypatch):
     from tunefield.serve import ollama
     from tunefield.serve.app import create_app

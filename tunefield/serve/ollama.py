@@ -199,3 +199,45 @@ def list_ollama_models() -> list[dict]:
 def chat_completions(payload: dict, timeout: float = 300.0) -> dict:
     """OpenAI 兼容转发:POST {OLLAMA_HOST}/v1/chat/completions。"""
     return _post_json("/v1/chat/completions", payload, timeout=timeout)
+
+
+def _plain_prompt(messages: list[dict]) -> str:
+    """把 chat messages 拼成纯文本（base 模型续写用,不走角色模板）。"""
+    parts: list[str] = []
+    for m in messages:
+        role = "用户" if m.get("role") == "user" else "模型"
+        content = str(m.get("content") or "")
+        parts.append(f"{role}: {content}")
+    return "\n\n".join(parts)
+
+
+def raw_completion_openai(payload: dict, timeout: float = 300.0) -> dict:
+    """base（预训练）模型的 OpenAI 兼容兜底:走 Ollama /api/generate 纯续写。
+
+    绕开 chat 模板的严格输出校验（peg-native format 报错源），把 messages
+    拼成纯文本 prompt 续写，再包装回 OpenAI chat 响应形状。
+    """
+    messages = payload.get("messages") or []
+    if not messages:
+        raise EngineError("messages must be a non-empty list")
+    prompt = _plain_prompt(messages)
+    body: dict = {
+        "model": payload["model"],
+        "prompt": prompt,
+        "stream": False,
+    }
+    if payload.get("temperature") is not None or payload.get("top_p") is not None:
+        options: dict = {}
+        if payload.get("temperature") is not None:
+            options["temperature"] = float(payload["temperature"])
+        if payload.get("top_p") is not None:
+            options["top_p"] = float(payload["top_p"])
+        body["options"] = options
+    data = _post_json("/api/generate", body, timeout=timeout)
+    return {
+        "choices": [
+            {"message": {"role": "assistant", "content": data.get("response", "")}}
+        ],
+        "model": payload["model"],
+        "done": data.get("done"),
+    }
