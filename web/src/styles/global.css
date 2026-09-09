@@ -260,6 +260,50 @@ body {
   gap: var(--gap-xs) var(--gap-sm);
 }
 
+/* ===== T9 量化导出面板 ===== */
+
+.gg-panel {
+  margin-top: var(--gap-md);
+}
+
+.gg-panel .loss-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.gg-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-xs);
+  margin-top: var(--gap-sm);
+}
+
+.gg-row {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-sm);
+  padding: 4px 10px;
+  border-radius: var(--radius);
+  background: var(--card-muted);
+  font-size: 12px;
+}
+
+.gg-size {
+  color: var(--text-muted);
+}
+
+.gg-dl {
+  margin-left: auto;
+  color: var(--accent-text);
+  text-decoration: none;
+  border-bottom: 1px dashed var(--accent);
+}
+
+.gg-dl:hover {
+  opacity: 0.8;
+}
+
 .btn-primary {
   height: 32px;
   padding: 0 16px;

@@ -36,6 +36,8 @@ export default function TrainScreen() {
   const [rec, setRec] = useState(null); // T8 推荐配置
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState("");
+  const [models, setModels] = useState([]); // T9 GGUF 清单
+  const [exporting, setExporting] = useState(false);
   const logRef = useRef(null);
 
   // 初始：拉取任务列表 + 历史 loss + 已构建数据集（刷新后恢复现场）
@@ -100,6 +102,30 @@ export default function TrainScreen() {
     },
     []
   );
+
+  // T9：GGUF 清单 + 导出
+  const loadModels = useCallback(async () => {
+    try {
+      setModels(await api.get("/api/models"));
+    } catch {
+      /* 后端未就绪保持空态 */
+    }
+  }, []);
+  useEffect(() => {
+    loadModels();
+  }, [loadModels]);
+
+  const onExport = async (jobId) => {
+    setExporting(true);
+    try {
+      await api.post(`/api/jobs/${jobId}/export`, {});
+      await loadModels();
+    } catch (e) {
+      setCreateError(`导出失败：${String(e.message || e)}`);
+    } finally {
+      setExporting(false);
+    }
+  };
 
   // 事件订阅：job.created / job.status / job.loss 实时更新，无需轮询
   const onEvent = useCallback((msg) => {
@@ -288,6 +314,40 @@ export default function TrainScreen() {
                 <span>{selected.kind === "pretrain" ? "从零预训练" : "微调"}</span>
               </div>
               {selected.error && <p className="detail-error">{selected.error}</p>}
+              {selected.status === "done" && (
+                <div className="gg-panel">
+                  <div className="loss-title">
+                    量化导出
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      disabled={exporting}
+                      onClick={() => onExport(selected.id)}
+                    >
+                      {exporting ? "导出中…" : "导出 GGUF"}
+                    </button>
+                  </div>
+                  {models.filter((m) => m.job_id === selected.id).length === 0 ? (
+                    <div className="job-empty">尚无 GGUF 产物 · 点「导出 GGUF」生成</div>
+                  ) : (
+                    <div className="gg-list">
+                      {models
+                        .filter((m) => m.job_id === selected.id)
+                        .map((m) => (
+                          <div key={m.id} className="gg-row">
+                            <span className="pf-rule">{m.quant}</span>
+                            <span className="gg-size">
+                              {(m.size_bytes / 1024 / 1024).toFixed(1)} MB
+                            </span>
+                            <a className="gg-dl" href={`/api/models/${m.id}/download`}>
+                              下载
+                            </a>
+                          </div>
+                        ))}
+                    </div>
+                  )}
+                </div>
+              )}
               {selected.status === "running" && (
                 <div className="job-progress big">
                   <div

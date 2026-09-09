@@ -141,6 +141,7 @@ def smoke(
 # 真实 GPU 训练由子进程承担，主进程不加载 CUDA 上下文。
 # ---------------------------------------------------------------------------
 
+import os
 import re
 import subprocess
 import threading
@@ -287,10 +288,17 @@ class BaseEngine:
             fire_stage(f"[engine] {self.label} 启动（{argv[0]}）")
 
             try:
+                # Windows 编码坑(B8):子进程默认用 ANSI 代码页读文件,UTF-8 路径
+                # (如中文领域名)会被误读成乱码目录。强制子进程全链路 UTF-8。
+                child_env = {
+                    **os.environ,
+                    "PYTHONUTF8": "1",
+                    "PYTHONIOENCODING": "utf-8",
+                }
                 proc = subprocess.Popen(
                     argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                     text=True, encoding="utf-8", errors="replace",
-                    bufsize=1, cwd=str(workdir),
+                    bufsize=1, cwd=str(workdir), env=child_env,
                 )
             except FileNotFoundError as exc:
                 raise EngineError(

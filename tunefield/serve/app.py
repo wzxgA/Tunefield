@@ -179,6 +179,47 @@ def create_app(handler=None) -> FastAPI:
             "recommend": recommend_for_dataset(ds),
         }
 
+    @app.post("/api/jobs/{job_id}/export", tags=["jobs"])
+    async def export_job(job_id: str, body: dict | None = None):
+        """T9：训练产物 → LoRA 合并 → GGUF → 量化 → 指纹入库。"""
+        job = db.get_job(job_id)
+        if job is None:
+            return JSONResponse({"detail": "job not found"}, status_code=404)
+        body = body or {}
+        quants = body.get("quants") or ["q4_k_m", "q8"]
+        import asyncio
+
+        from tunefield.engine.base import EngineError
+        from tunefield.engine.exporter import Exporter
+
+        loop = asyncio.get_running_loop()
+        try:
+            return await run_in_threadpool(
+                Exporter().run_export, job, quants=tuple(quants), loop=loop
+            )
+        except EngineError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+
+    @app.get("/api/models", tags=["models"])
+    async def list_models():
+        """T9：GGUF 模型清单（adapters + quantized 联表）。"""
+        from tunefield.assets import registry
+
+        return registry.list_gguf_models()
+
+    @app.get("/api/models/{model_id}/download", tags=["models"])
+    async def download_model(model_id: str):
+        """T9：下载 GGUF 文件。"""
+        from tunefield.assets import registry
+
+        m = registry.get_gguf_model(model_id)
+        if m is None:
+            return JSONResponse({"detail": "model not found"}, status_code=404)
+        path = Path(m["path"])
+        if not path.exists():
+            return JSONResponse({"detail": "file missing on disk"}, status_code=404)
+        return FileResponse(path, filename=path.name, media_type="application/octet-stream")
+
     @app.get("/api/jobs", tags=["jobs"])
     async def list_jobs():
         return db.list_jobs()

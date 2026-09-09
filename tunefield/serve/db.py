@@ -225,3 +225,58 @@ def set_dataset_built(dataset_id: str, stats_json: str) -> None:
             "UPDATE datasets SET status = 'built', stats_json = ? WHERE id = ?",
             (stats_json, dataset_id),
         )
+
+
+# ---------------------------------------------------------------------------
+# 资产访问层（T9 量化导出：adapters / quantized_models）
+# ---------------------------------------------------------------------------
+
+
+def insert_adapter(
+    *, id: str, job_id: str, domain: str, version: str, path: str,
+    fingerprint_json: str | None,
+) -> dict[str, Any]:
+    """登记 LoRA 适配器（幂等：同 job 重复导出覆盖 fingerprint）。"""
+    with transaction() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO adapters (id, job_id, domain, version, path, "
+            "fingerprint_json, created_at) VALUES (?,?,?,?,?,?, "
+            "COALESCE((SELECT created_at FROM adapters WHERE id=?), "
+            "strftime('%Y-%m-%dT%H:%M:%SZ','now')))",
+            (id, job_id, domain, version, path, fingerprint_json, id),
+        )
+        row = conn.execute("SELECT * FROM adapters WHERE id = ?", (id,)).fetchone()
+    return dict(row) if row else {}
+
+
+def get_adapter(adapter_id: str) -> dict[str, Any] | None:
+    with transaction() as conn:
+        row = conn.execute("SELECT * FROM adapters WHERE id = ?", (adapter_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def list_adapters() -> list[dict[str, Any]]:
+    with transaction() as conn:
+        rows = conn.execute("SELECT * FROM adapters ORDER BY created_at").fetchall()
+    return [dict(r) for r in rows]
+
+
+def insert_quantized_model(
+    *, id: str, adapter_id: str, quant: str, path: str, size_bytes: int
+) -> dict[str, Any]:
+    with transaction() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO quantized_models (id, adapter_id, quant, path, "
+            "size_bytes, created_at) VALUES (?,?,?,?,?, strftime('%Y-%m-%dT%H:%M:%SZ','now'))",
+            (id, adapter_id, quant, path, size_bytes),
+        )
+        row = conn.execute("SELECT * FROM quantized_models WHERE id = ?", (id,)).fetchone()
+    return dict(row) if row else {}
+
+
+def list_quantized_models() -> list[dict[str, Any]]:
+    with transaction() as conn:
+        rows = conn.execute(
+            "SELECT * FROM quantized_models ORDER BY created_at"
+        ).fetchall()
+    return [dict(r) for r in rows]
