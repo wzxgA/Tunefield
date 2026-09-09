@@ -304,6 +304,140 @@ body {
   opacity: 0.8;
 }
 
+/* ===== T10 对话屏 ===== */
+
+.chat-screen {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.chat-banner {
+  padding: 6px 10px;
+  margin-bottom: var(--gap-sm);
+  border-radius: var(--radius);
+  font-size: 12px;
+}
+
+.chat-ok {
+  background: #e9f0e6;
+  color: var(--ok);
+}
+
+.chat-warn {
+  background: var(--accent-soft);
+  color: var(--warn);
+}
+
+.chat-err {
+  background: #f3e3dd;
+  color: var(--err);
+}
+
+.chat-models {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-sm);
+  margin-bottom: var(--gap-sm);
+}
+
+.chat-models .input:first-child {
+  flex: 1;
+}
+
+.chat-params {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-sm);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.chat-num {
+  width: 64px;
+  height: 28px;
+}
+
+.chat-import {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--gap-xs) var(--gap-sm);
+  margin-bottom: var(--gap-sm);
+  padding: var(--gap-xs) 0;
+}
+
+.chat-import-item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--gap-xs);
+}
+
+.chat-log {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-sm);
+  padding: var(--gap-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--card);
+}
+
+.chat-msg {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 82%;
+}
+
+.chat-msg.user {
+  align-self: flex-end;
+  align-items: flex-end;
+}
+
+.chat-msg.assistant {
+  align-self: flex-start;
+  align-items: flex-start;
+}
+
+.chat-role {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.chat-bubble {
+  margin: 0;
+  padding: 6px 10px;
+  border-radius: 10px;
+  font: 400 13px/1.6 var(--font-sans);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.chat-msg.user .chat-bubble {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.chat-msg.assistant .chat-bubble {
+  background: var(--card-muted);
+  color: var(--text);
+}
+
+.chat-input {
+  display: flex;
+  gap: var(--gap-sm);
+  margin-top: var(--gap-sm);
+}
+
+.chat-input .input {
+  flex: 1;
+}
+
 .btn-primary {
   height: 32px;
   padding: 0 16px;

@@ -108,7 +108,7 @@ def recommend(
         "template": "qwen",
         "per_device_batch_size": 1,
         "gradient_accumulation_steps": 8,
-        "logging_steps": 5,
+        "logging_steps": 1,  # 每步打 loss,保证训练屏实时出曲线
         "save_steps": 200,
         "seed": 42,
     }

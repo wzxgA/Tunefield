@@ -288,12 +288,15 @@ class BaseEngine:
             fire_stage(f"[engine] {self.label} 启动（{argv[0]}）")
 
             try:
-                # Windows 编码坑(B8):子进程默认用 ANSI 代码页读文件,UTF-8 路径
-                # (如中文领域名)会被误读成乱码目录。强制子进程全链路 UTF-8。
+                # Windows/管道输出缓冲坑(B8)：不设 PYTHONUNBUFFERED 时，子进程的
+                # stdout 走块缓冲（攒约 8KB 才 flush），导致训练日志/loss 在训练
+                # 全程不出现、进程退出后一次性涌入。PYTHONUTF8 管编码、这个管缓冲，
+                # 两者都要。
                 child_env = {
                     **os.environ,
                     "PYTHONUTF8": "1",
                     "PYTHONIOENCODING": "utf-8",
+                    "PYTHONUNBUFFERED": "1",
                 }
                 proc = subprocess.Popen(
                     argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,

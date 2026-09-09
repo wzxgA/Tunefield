@@ -13,7 +13,7 @@ import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, Form, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -206,6 +206,66 @@ def create_app(handler=None) -> FastAPI:
         from tunefield.assets import registry
 
         return registry.list_gguf_models()
+
+    # ---------------- T10 对话（Ollama 集成） ----------------
+    @app.get("/api/chat/status", tags=["chat"])
+    async def chat_status():
+        from tunefield.serve import ollama
+
+        return ollama.status()
+
+    @app.get("/api/chat/models", tags=["chat"])
+    async def chat_models():
+        """已导入 Ollama 的平台模型（tunefield- 前缀）。"""
+        from tunefield.serve import ollama
+
+        return {"models": ollama.list_ollama_models()}
+
+    @app.post("/api/models/{model_id}/import", tags=["chat"])
+    async def import_model(model_id: str, body: dict | None = None):
+        """T10：把平台 GGUF 导入 Ollama(ollama create),供对话屏使用。"""
+        from tunefield.assets import registry
+        from tunefield.engine.base import EngineError
+        from tunefield.serve import ollama
+
+        m = registry.get_gguf_model(model_id)
+        if m is None:
+            return JSONResponse({"detail": "model not found"}, status_code=404)
+        body = body or {}
+        try:
+            return await run_in_threadpool(
+                ollama.import_model, m,
+                temperature=float(body.get("temperature", 0.8)),
+                top_p=float(body.get("top_p", 0.9)),
+            )
+        except EngineError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+
+    @app.post("/v1/chat/completions", tags=["chat"])
+    async def chat_completions(request: Request):
+        """T10：OpenAI 兼容端点,转发 Ollama(非流式;流式属 P1)。"""
+        import json as _json
+
+        from tunefield.engine.base import EngineError
+        from tunefield.serve import ollama
+
+        try:
+            payload = await request.json()
+        except Exception:
+            return JSONResponse({"detail": "invalid json body"}, status_code=400)
+        if not isinstance(payload, dict) or not payload.get("model"):
+            return JSONResponse({"detail": "missing model"}, status_code=400)
+        if not isinstance(payload.get("messages"), list) or not payload["messages"]:
+            return JSONResponse({"detail": "messages must be a non-empty list"}, status_code=400)
+        if payload.get("stream"):
+            return JSONResponse(
+                {"detail": "stream=true 将在 P1 提供,当前请使用 stream=false"},
+                status_code=400,
+            )
+        try:
+            return await run_in_threadpool(ollama.chat_completions, payload)
+        except EngineError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=502)
 
     @app.get("/api/models/{model_id}/download", tags=["models"])
     async def download_model(model_id: str):

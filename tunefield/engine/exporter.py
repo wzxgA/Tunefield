@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import secrets
 import shutil
 import subprocess
@@ -30,13 +29,6 @@ from tunefield.engine.base import EngineError, _publish, log_append
 
 # 计划量化档 → llama-quantize 类型名
 QUANT_TYPES = {"q4_k_m": "Q4_K_M", "q8": "Q8_0"}
-
-
-def _slug(text: str) -> str:
-    """产物文件名专用:非 ASCII 字符转 '-',避免 C 工具链(llama-quantize 等)
-    对中文路径的 ANSI/UTF-8 处理差异;纯中文名回退为 model。"""
-    s = re.sub(r"[^A-Za-z0-9._-]+", "-", text).strip("-.")
-    return s or "model"
 
 
 def _converter_script() -> Path:
@@ -75,8 +67,14 @@ class Exporter:
 
     def _run(self, cmd: list[str], cwd: Path | None = None) -> tuple[int, str]:
         """子进程执行（测试可 monkeypatch 本方法伪造工具链输出）。"""
-        # 与训练子进程同理:强制 UTF-8,避免中文路径被 ANSI 代码页误读
-        child_env = {**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
+        # 与训练子进程同理:强制 UTF-8 + 关掉块缓冲(PYTHONUNBUFFERED),
+        # 既避免中文路径被 ANSI 误读,也保证转换/量化日志逐行即时返回
+        child_env = {
+            **os.environ,
+            "PYTHONUTF8": "1",
+            "PYTHONIOENCODING": "utf-8",
+            "PYTHONUNBUFFERED": "1",
+        }
         proc = subprocess.run(
             cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
             cwd=str(cwd) if cwd else None, env=child_env,
@@ -97,7 +95,7 @@ class Exporter:
 
         base_model = job.get("base_model") or (engine_base_pinned() or {}).get("base") or ""
         version = job_id[:8]
-        slug = _slug(domain)  # 文件名一律 ASCII;domain 原名仅进指纹与展示
+        slug = registry.slugify(domain)  # 文件名一律 ASCII;domain 原名仅进指纹与展示
         gguf_dir = config.GGUF_DIR
         gguf_dir.mkdir(parents=True, exist_ok=True)
         merged = gguf_dir / f"{slug}-{version}-merged"

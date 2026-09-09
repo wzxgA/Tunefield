@@ -74,6 +74,7 @@ def test_lmfactory_prepare_requires_built_dataset():
 
 
 def test_engine_run_monitors_loss_and_progress():
+    from tunefield.engine.base import log_tail
     from tunefield.engine.llmfactory.runner import LlmFactoryEngine
     from tunefield.serve import db
 
@@ -84,7 +85,8 @@ def test_engine_run_monitors_loss_and_progress():
     dataset = {"id": "ds1", "name": "demo"}
     # 静态两行采样（flush 保证行独立），epochs=2 → 末行 epoch=2/2 → progress≈1
     script = (
-        "import sys\n"
+        "import os,sys\n"
+        "print('PYUNBUF=' + os.environ.get('PYTHONUNBUFFERED', ''), flush=True)\n"
         "print(\"{'loss': 0.9, 'epoch': 1.0, 'step': 1}\", flush=True)\n"
         "print(\"{'loss': 0.7, 'epoch': 2.0, 'step': 2}\", flush=True)\n"
     )
@@ -93,6 +95,8 @@ def test_engine_run_monitors_loss_and_progress():
     final = db.get_job("job-loss")
     assert final["loss_json"]  # 采样点已落库
     assert float(final["progress"]) > 0.9  # epoch 逐行推进到终点
+    # 回归:子进程必须拿到 PYTHONUNBUFFERED=1(否则日志被块缓冲、曲线训练完才出现)
+    assert any(line.startswith("PYUNBUF=1") for line in log_tail("job-loss"))
 
 
 def test_engine_run_fails_with_readable_error_after_retry():

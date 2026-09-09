@@ -13,6 +13,18 @@ from pathlib import Path
 from tunefield.serve import db
 
 
+def slugify(text: str) -> str:
+    """产物/Ollama 模型名专用:非 ASCII 转 '-',纯中文回退 'model'。
+
+    C 工具链(llama-quantize)与 Ollama 模型名对非 ASCII 敏感,统一 ASCII 化;
+    领域原名仍完整保存在指纹与数据库中用于展示。
+    """
+    import re
+
+    s = re.sub(r"[^A-Za-z0-9._-]+", "-", text).strip("-.")
+    return s or "model"
+
+
 def register_adapter(*, job_id: str, domain: str, path: Path, fingerprint: dict) -> str:
     """把训练产物目录登记为 adapter 资产，返回 adapter_id（= job_id）。"""
     adapter_id = job_id
@@ -47,13 +59,18 @@ def list_gguf_models() -> list[dict]:
     out: list[dict] = []
     for m in db.list_quantized_models():
         adapter = adapters.get(m["adapter_id"]) or {}
+        domain = adapter.get("domain") or ""
+        version = adapter.get("version") or ""
+        slug = slugify(domain) or "model"
         out.append(
             {
                 "id": m["id"],
                 "adapter_id": m["adapter_id"],
                 "job_id": adapter.get("job_id") or m["adapter_id"],
-                "domain": adapter.get("domain") or "",
-                "version": adapter.get("version") or "",
+                "domain": domain,
+                "version": version,
+                "slug": slug,
+                "ollama_name": f"tunefield-{slug}-{version}",
                 "quant": m["quant"],
                 "path": m["path"],
                 "size_bytes": m["size_bytes"],

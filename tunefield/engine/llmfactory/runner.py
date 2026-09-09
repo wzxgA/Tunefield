@@ -26,7 +26,7 @@ _DEFAULT_CFG = {
     "template": "qwen",
     "per_device_batch_size": 1,
     "gradient_accumulation_steps": 8,
-    "logging_steps": 5,
+    "logging_steps": 1,  # 每步打 loss,小数据/短任务也实时出点
     "save_steps": 200,
     "seed": 42,
 }
@@ -80,6 +80,9 @@ class LlmFactoryEngine(base.BaseEngine):
         yaml_fields = {
             "model_name_or_path": base_model,
             "do_train": True,  # 缺失时 HF 默认不训练，llamafactory 会加载完直接退出
+            # 输出目录允许覆盖:失败重试/中断后目录可能残留 partial 文件,
+            # 否则 parser 会拒绝启动(与显式 resume 续训兼容,不会清掉 checkpoint)
+            "overwrite_output_dir": True,
             "dataset": "train",
             "dataset_dir": str(data_dir),
             "template": cfg["template"],
