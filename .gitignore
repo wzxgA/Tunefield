@@ -33,3 +33,4 @@ models/gguf/*
 *.tmp
 demo-data/
 temp/
+yuanxing
