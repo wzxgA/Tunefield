@@ -302,6 +302,17 @@ def create_app(handler=None) -> FastAPI:
 
         return {"models": ollama.list_ollama_models()}
 
+    @app.delete("/api/chat/models/{name}", tags=["chat"])
+    async def remove_imported_model(name: str):
+        """删除已导入 Ollama 的平台模型（仅 tunefield- 前缀；幂等）。"""
+        from tunefield.engine.base import EngineError
+        from tunefield.serve import ollama
+
+        try:
+            return await run_in_threadpool(ollama.remove_model, name)
+        except EngineError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
+
     @app.post("/api/models/{model_id}/import", tags=["chat"])
     async def import_model(model_id: str, body: dict | None = None):
         """T10：把平台 GGUF 导入 Ollama(ollama create),供对话屏使用。"""

@@ -70,15 +70,23 @@ def status() -> dict:
 # Modelfile 与导入
 # ---------------------------------------------------------------------------
 
+# 预训练(base)模型没有 chat 能力:套 Instruct 版模板会让 llama.cpp 严格校验
+# 输出必须符合 <|im_start|> 语法,base 模型不守格式 → peg-native format 报错。
+# 导入时改为无语法约束的纯续写模板(输入原文直接接续写,不做角色拆分)。
+_PLAIN_CHAT_TEMPLATE = '"""{{ .Prompt }}"""'
+
+
 def make_modelfile(
-    gguf_path: Path, *, temperature: float = 0.8, top_p: float = 0.9
+    gguf_path: Path, *, temperature: float = 0.8, top_p: float = 0.9,
+    plain: bool = False,
 ) -> Path:
-    """为 GGUF 生成 Modelfile(FROM + 默认采样参数),与文件同目录同名。"""
-    lines = [
-        f"FROM {gguf_path}",
-        f"PARAMETER temperature {temperature}",
-        f"PARAMETER top_p {top_p}",
-    ]
+    """为 GGUF 生成 Modelfile(FROM + 采样参数,可选纯续写 TEMPLATE)。"""
+    lines = [f"FROM {gguf_path}"]
+    if plain:
+        # 显式 TEMPLATE 覆盖权重里携带的 chat_template;纯续写无语法约束
+        lines.append(f"TEMPLATE {_PLAIN_CHAT_TEMPLATE}")
+    lines.append(f"PARAMETER temperature {temperature}")
+    lines.append(f"PARAMETER top_p {top_p}")
     modelfile = gguf_path.with_suffix(".Modelfile")
     modelfile.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return modelfile
@@ -98,7 +106,15 @@ def import_model(m: dict, *, temperature: float = 0.8, top_p: float = 0.9) -> di
     gguf = Path(m["path"])
     if not gguf.exists():
         raise EngineError(f"GGUF 文件不存在:{gguf}")
-    modelfile = make_modelfile(gguf, temperature=temperature, top_p=top_p)
+    # 预训练(base, kind=pretrain)产物用纯续写模板,避免 Instruct 语法校验报错
+    plain = False
+    if m.get("job_id"):
+        from tunefield.serve import db
+
+        job = db.get_job(m["job_id"])
+        plain = bool(job and job.get("kind") == "pretrain")
+    modelfile = make_modelfile(gguf, temperature=temperature, top_p=top_p,
+                               plain=plain)
     name = m["ollama_name"]
     proc = subprocess.run(
         [ollama_bin(), "create", name, "-f", str(modelfile)],
@@ -108,6 +124,35 @@ def import_model(m: dict, *, temperature: float = 0.8, top_p: float = 0.9) -> di
         tail = "\n".join((proc.stdout or "").splitlines()[-8:])
         raise EngineError(f"ollama create 失败(rc={proc.returncode}):\n{tail or proc.stderr}")
     return {"ollama_name": name, "modelfile": str(modelfile)}
+
+
+def remove_model(name: str) -> dict:
+    """删除已导入 Ollama 的平台模型（ollama rm，仅允许 tunefield- 前缀）。
+
+    幂等：目标已被删/不存在（"not found"）按已删除处理。
+    """
+    if not name.startswith("tunefield-"):
+        raise EngineError(
+            f"仅可删除平台导入的模型（tunefield- 前缀），拒绝删除：{name}"
+        )
+    if not installed():
+        raise EngineError(
+            "未安装 Ollama。请到 https://ollama.com/download 安装,"
+            "或设置 TUNEFIELD_OLLAMA_BIN 指向 ollama 可执行文件。"
+        )
+    if not running():
+        raise EngineError(
+            "Ollama 已安装但服务未运行:请启动 Ollama(托盘图标或 `ollama serve`)后重试。"
+        )
+    proc = subprocess.run(
+        [ollama_bin(), "rm", name],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120,
+    )
+    text = (proc.stdout or "") + (proc.stderr or "")
+    if proc.returncode != 0 and "not found" not in text.lower():
+        tail = "\n".join([ln for ln in text.splitlines() if ln.strip()][-8:])
+        raise EngineError(f"ollama rm 失败(rc={proc.returncode}):\n{tail or text}")
+    return {"name": name, "removed": proc.returncode == 0}
 
 
 # ---------------------------------------------------------------------------

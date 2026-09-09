@@ -15,6 +15,7 @@ export default function ChatScreen() {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
   const [importingId, setImportingId] = useState("");
+  const [removing, setRemoving] = useState("");
   const logRef = useRef(null);
 
   const load = useCallback(async () => {
@@ -89,6 +90,26 @@ export default function ChatScreen() {
     }
   };
 
+  // 移除已导入 Ollama 的模型（不影响平台 GGUF 文件与下载）
+  const removeModel = async (name) => {
+    if (!window.confirm(`移除已导入的 ${name}？\n（仅从 Ollama 删除，平台 GGUF 文件保留）`)) {
+      return;
+    }
+    setError("");
+    setRemoving(name);
+    try {
+      await api.del(`/api/chat/models/${encodeURIComponent(name)}`);
+      const r = await api.get("/api/chat/models");
+      const next = r.models || [];
+      setOllamaModels(next);
+      setSelected((cur) => (cur === name ? (next[0]?.name ?? "") : cur));
+    } catch (e) {
+      setError(String(e.message || e));
+    } finally {
+      setRemoving("");
+    }
+  };
+
   const importedNames = new Set(ollamaModels.map((m) => m.name));
   const banner = (() => {
     if (!status) return null;
@@ -132,6 +153,26 @@ export default function ChatScreen() {
         </div>
       </div>
 
+      {/* 始终展示已导入模型列表：每项均提供「移除」按钮，与平台 GGUF 列表无关 */}
+      {ollamaModels.length > 0 && (
+        <div className="chat-imported">
+          <span className="pf-label">已导入 Ollama（可移除）：</span>
+          {ollamaModels.map((m) => (
+            <span key={m.name} className="chat-import-item">
+              <span className="pf-rule">{m.name}</span>
+              <button
+                type="button"
+                className="btn-inspect"
+                disabled={removing === m.name}
+                onClick={() => removeModel(m.name)}
+              >
+                {removing === m.name ? "移除中…" : "移除"}
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+
       {ggufs.length > 0 && (
         <div className="chat-import">
           <span className="pf-label">平台 GGUF(可导入):</span>
@@ -139,7 +180,17 @@ export default function ChatScreen() {
             <span key={m.id} className="chat-import-item">
               <span className="pf-rule">{m.slug}-{m.version} · {m.quant}</span>
               {importedNames.has(m.ollama_name) ? (
-                <span className="pf-clean-none">已导入</span>
+                <span className="chat-import-actions">
+                  <span className="pf-clean-none">已导入</span>
+                  <button
+                    type="button"
+                    className="btn-inspect"
+                    disabled={removing === m.ollama_name}
+                    onClick={() => removeModel(m.ollama_name)}
+                  >
+                    {removing === m.ollama_name ? "移除中…" : "移除"}
+                  </button>
+                </span>
               ) : (
                 <button type="button" className="btn-inspect" disabled={importingId === m.id} onClick={() => importModel(m)}>
                   {importingId === m.id ? "导入中…" : "导入"}

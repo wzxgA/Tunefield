@@ -47,6 +47,42 @@ def test_make_modelfile_content(tmp_path):
     assert lines[0] == f"FROM {gguf}"
     assert "PARAMETER temperature 0.7" in lines
     assert "PARAMETER top_p 0.85" in lines
+    assert not any("TEMPLATE" in ln for ln in lines)  # 微调产物不额外加模板
+
+
+def test_make_modelfile_plain_template(tmp_path):
+    from tunefield.serve.ollama import make_modelfile
+
+    gguf = tmp_path / "base-model.gguf"
+    gguf.write_bytes(b"GGUF")
+    mf = make_modelfile(gguf, plain=True)
+    content = mf.read_text(encoding="utf-8")
+    assert "TEMPLATE" in content and "{{ .Prompt }}" in content
+
+
+def test_import_model_pretrain_uses_plain_template(monkeypatch, tmp_path):
+    from tunefield.serve import db, ollama
+
+    db.insert_job(job_id="job-base", dataset_id=None, domain="pre", kind="pretrain",
+                  base_model=None, config_json=None, status="done",
+                  created_at="2026-01-01T00:00:00Z")
+    monkeypatch.setattr(ollama, "installed", lambda: True)
+    monkeypatch.setattr(ollama, "running", lambda: True)
+    captured = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        return type("R", (), {"returncode": 0, "stdout": "ok", "stderr": ""})()
+
+    monkeypatch.setattr(ollama.subprocess, "run", fake_run)
+    gguf = tmp_path / "base-model-q4_k_m.gguf"
+    gguf.write_bytes(b"GGUF")
+    result = ollama.import_model(
+        {"path": str(gguf), "ollama_name": "tunefield-pre-abc",
+         "job_id": "job-base"}
+    )
+    content = Path(result["modelfile"]).read_text(encoding="utf-8")
+    assert "TEMPLATE" in content and "{{ .Prompt }}" in content
 
 
 def test_import_model_builds_create_command(monkeypatch, tmp_path):
@@ -69,6 +105,67 @@ def test_import_model_builds_create_command(monkeypatch, tmp_path):
     assert result["ollama_name"] == "tunefield-model-e2d1"
     assert captured["cmd"][1:3] == ["create", "tunefield-model-e2d1"]
     assert Path(result["modelfile"]).exists()
+
+
+def test_remove_model_guards_prefix_and_running(monkeypatch):
+    from tunefield.engine.base import EngineError
+    from tunefield.serve import ollama
+
+    # 非 tunefield- 前缀直接拒绝
+    with pytest.raises(EngineError, match="拒绝删除"):
+        ollama.remove_model("llama3:latest")
+    # 前缀正确但未安装 → 明确指引
+    monkeypatch.setattr(ollama, "installed", lambda: False)
+    with pytest.raises(EngineError, match="未安装 Ollama"):
+        ollama.remove_model("tunefield-demo-x")
+    # 未运行 → 明确指引
+    monkeypatch.setattr(ollama, "installed", lambda: True)
+    monkeypatch.setattr(ollama, "running", lambda: False)
+    with pytest.raises(EngineError, match="未运行"):
+        ollama.remove_model("tunefield-demo-x")
+
+
+def test_remove_model_idempotent_and_command(monkeypatch, tmp_path):
+    from tunefield.serve import ollama
+
+    monkeypatch.setattr(ollama, "installed", lambda: True)
+    monkeypatch.setattr(ollama, "running", lambda: True)
+    captured = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        return type("R", (), {"returncode": 0, "stdout": "success", "stderr": ""})()
+
+    monkeypatch.setattr(ollama.subprocess, "run", fake_run)
+    assert ollama.remove_model("tunefield-demo-x")["removed"] is True
+    assert captured["cmd"][1:3] == ["rm", "tunefield-demo-x"]
+
+    # 已不存在（not found）按已删除处理（幂等）
+    def fake_run_notfound(cmd, **kwargs):
+        return type("R", (), {
+            "returncode": 1,
+            "stdout": "",
+            "stderr": "Error: model 'tunefield-demo-x' not found",
+        })()
+
+    monkeypatch.setattr(ollama.subprocess, "run", fake_run_notfound)
+    assert ollama.remove_model("tunefield-demo-x")["removed"] is False
+
+
+def test_remove_imported_api(monkeypatch):
+    from tunefield.serve import ollama
+    from tunefield.serve.app import create_app
+
+    # 非平台前缀 → 400（不触碰 Ollama）
+    with TestClient(create_app()) as c:
+        r = c.delete("/api/chat/models/llama3")
+        assert r.status_code == 400
+        # 平台前缀 → 调用 remove_model
+        monkeypatch.setattr(ollama, "remove_model",
+                            lambda name: {"name": name, "removed": True})
+        r2 = c.delete("/api/chat/models/tunefield-demo-x")
+        assert r2.status_code == 200
+        assert r2.json()["removed"] is True
 
 
 def test_import_model_requires_running_ollama(monkeypatch, tmp_path):

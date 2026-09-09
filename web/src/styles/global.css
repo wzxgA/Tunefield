@@ -372,6 +372,19 @@ body {
   display: inline-flex;
   align-items: center;
   gap: var(--gap-xs);
+  padding: 2px 8px;
+  border-radius: 8px;
+  background: var(--card-muted);
+}
+
+.chat-import-item .pf-rule {
+  background: transparent;
+}
+
+.chat-import-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .chat-log {

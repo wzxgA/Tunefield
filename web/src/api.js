@@ -18,6 +18,7 @@ export const api = {
   get: (path) => request(path),
   post: (path, body) =>
     request(path, { method: "POST", body: JSON.stringify(body ?? {}) }),
+  del: (path) => request(path, { method: "DELETE" }),
   // multipart 上传（浏览器自动带 boundary，不手动设 Content-Type）
   upload: (path, formData) =>
     request(path, { method: "POST", body: formData }),
