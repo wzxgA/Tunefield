@@ -329,7 +329,7 @@ body {
 }
 
 .chat-ok {
-  background: #e9f0e6;
+  background: rgba(159, 199, 154, 0.16);
   color: var(--ok);
 }
 
@@ -339,7 +339,7 @@ body {
 }
 
 .chat-err {
-  background: #f3e3dd;
+  background: rgba(207, 143, 129, 0.16);
   color: var(--err);
 }
 
@@ -488,9 +488,9 @@ body {
 .btn-danger {
   height: 24px;
   padding: 0 10px;
-  border: 1px solid #e0cfc4;
+  border: 1px solid rgba(255, 255, 255, 0.16);
   border-radius: 6px;
-  background: #faf3ee;
+  background: rgba(255, 255, 255, 0.04);
   color: var(--err);
   font: 400 12px var(--font-sans);
   cursor: pointer;
@@ -499,7 +499,7 @@ body {
 
 .btn-danger:hover:not(:disabled) {
   border-color: var(--err);
-  background: #f3e3dd;
+  background: rgba(207, 143, 129, 0.16);
 }
 
 .btn-danger:disabled {
@@ -601,12 +601,12 @@ body {
 }
 
 .st-p-ok {
-  background: #e9f0e6;
+  background: rgba(159, 199, 154, 0.16);
   color: var(--ok);
 }
 
 .st-p-failed {
-  background: #f3e3dd;
+  background: rgba(207, 143, 129, 0.16);
   color: var(--err);
 }
 
@@ -662,7 +662,7 @@ body {
 .tl-detail {
   min-width: 0;
   overflow-wrap: anywhere;
-  color: #4a443a;
+  color: #cfd6df;
 }
 
 .run-log {
@@ -772,12 +772,12 @@ body {
 }
 
 .st-done {
-  background: #e9f0e6;
+  background: rgba(159, 199, 154, 0.16);
   color: var(--ok);
 }
 
 .st-failed {
-  background: #f3e3dd;
+  background: rgba(207, 143, 129, 0.16);
   color: var(--err);
 }
 
@@ -872,8 +872,8 @@ body {
   max-height: 200px;
   overflow: auto;
   border-radius: var(--radius);
-  background: #2c2822;
-  color: #e8e2d5;
+  background: #1b1e24;
+  color: #cfd6df;
   font: 400 11px/1.6 Consolas, monospace;
   white-space: pre-wrap;
   word-break: break-all;
@@ -994,7 +994,7 @@ body {
 }
 
 .st-ingested {
-  background: #e9f0e6;
+  background: rgba(159, 199, 154, 0.16);
   color: var(--ok);
 }
 
@@ -1122,8 +1122,8 @@ body {
 }
 
 .pf-lang {
-  background: #e7edf3;
-  color: #45627c;
+  background: rgba(159, 176, 196, 0.16);
+  color: #aebfd0;
 }
 
 .pf-count {
@@ -1138,12 +1138,12 @@ body {
 }
 
 .s-ok {
-  background: #e9f0e6;
+  background: rgba(159, 199, 154, 0.16);
   color: var(--ok);
 }
 
 .s-error {
-  background: #f3e3dd;
+  background: rgba(207, 143, 129, 0.16);
   color: var(--err);
 }
 
@@ -1171,7 +1171,7 @@ body {
   overflow: auto;
   border-radius: 6px;
   background: var(--card-muted);
-  color: #4a443a;
+  color: #cfd6df;
   font: 400 12px/1.55 var(--font-sans);
   white-space: pre-wrap;
   word-break: break-word;
@@ -1305,7 +1305,7 @@ body {
 .ch-s-label {
   overflow: hidden;
   text-overflow: ellipsis;
-  color: #4a443a;
+  color: #cfd6df;
 }
 
 /* ===== T5 指令样本预览（Alpaca 卡片） ===== */
@@ -1338,8 +1338,8 @@ body {
 }
 
 .in-badge.in-qa {
-  background: #e7edf3;
-  color: #45627c;
+  background: rgba(159, 176, 196, 0.16);
+  color: #aebfd0;
 }
 
 .in-field {
@@ -1379,7 +1379,7 @@ body {
   overflow: auto;
   border-radius: 6px;
   background: var(--card-muted);
-  color: #4a443a;
+  color: #cfd6df;
   font: 400 12px/1.5 var(--font-sans);
   white-space: pre-wrap;
   word-break: break-word;
@@ -1443,11 +1443,11 @@ body {
 
 .rp-check.rp-warn {
   background: var(--accent-soft);
-  color: #7a5a2b;
+  color: var(--warn);
 }
 
 .rp-check.rp-error {
-  background: #f3e3dd;
+  background: rgba(207, 143, 129, 0.16);
   color: var(--err);
 }
 
@@ -1849,6 +1849,15 @@ body::before {
 .chip.g {
   border-color: rgba(231, 238, 245, 0.32);
   color: #e7eef5;
+}
+
+/* ---- W2 模型屏 ---- */
+.badge.m-quant {
+  font-family: var(--font-mono);
+  letter-spacing: 0.06em;
+  border-color: var(--stroke);
+  color: var(--accent-text);
+  background: var(--accent-soft);
 }
 
 .activity {

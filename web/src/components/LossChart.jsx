@@ -31,14 +31,14 @@ export default function LossChart({ points }) {
       xAxis: {
         type: "category",
         data: points.map((p) => p.step),
-        axisLine: { lineStyle: { color: "#d8d0bf" } },
-        axisLabel: { color: "#8b8477", fontSize: 11 },
+        axisLine: { lineStyle: { color: "rgba(255,255,255,.2)" } },
+        axisLabel: { color: "#9aa1ab", fontSize: 11 },
       },
       yAxis: {
         type: "value",
         scale: true,
-        splitLine: { lineStyle: { color: "#efe9dc" } },
-        axisLabel: { color: "#8b8477", fontSize: 11 },
+        splitLine: { lineStyle: { color: "rgba(255,255,255,.08)" } },
+        axisLabel: { color: "#9aa1ab", fontSize: 11 },
       },
       series: [
         {
@@ -46,9 +46,9 @@ export default function LossChart({ points }) {
           data: points.map((p) => p.value),
           smooth: true,
           symbolSize: 5,
-          lineStyle: { width: 2, color: "#b0955d" },
-          itemStyle: { color: "#b0955d" },
-          areaStyle: { color: "rgba(176,149,93,0.10)" },
+          lineStyle: { width: 2, color: "#e7ecf3" },
+          itemStyle: { color: "#e7ecf3" },
+          areaStyle: { color: "rgba(215,221,230,0.10)" },
         },
       ],
       tooltip: { trigger: "axis" },

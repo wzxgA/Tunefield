@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api } from "./api.js";
 import { useEvents } from "./hooks/useEvents.js";
 import ChatScreen from "./screens/ChatScreen.jsx";
+import ModelsScreen from "./screens/ModelsScreen.jsx";
 import TrainScreen from "./screens/TrainScreen.jsx";
 import UploadScreen from "./screens/UploadScreen.jsx";
 
@@ -201,11 +202,7 @@ export default function App() {
               （交互原型预览：yuanxing/index-3.html）
             </div>
           )}
-          {screen === "models" && (
-            <div className="placeholder-card">
-              模型库 · W2 交付：GGUF 清单 / 一键导入 Ollama / 指纹反查
-            </div>
-          )}
+          {screen === "models" && <ModelsScreen />}
         </div>
       </main>
 
