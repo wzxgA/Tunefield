@@ -1,0 +1,41 @@
+{
+  "ok": true,
+  "checks": [
+    {
+      "name": "CLI build 产出样本",
+      "ok": true,
+      "detail": "样本 25"
+    },
+    {
+      "name": "Web build 置 built",
+      "ok": true,
+      "detail": "built"
+    },
+    {
+      "name": "train.jsonl 逐行一致",
+      "ok": true,
+      "detail": "CLI 25 行 vs Web 25 行"
+    },
+    {
+      "name": "质检报告一致",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "纯文本语料 corpus.txt 一致",
+      "ok": true,
+      "detail": "14180 vs 14180 字符"
+    },
+    {
+      "name": "样本数一致",
+      "ok": true,
+      "detail": "CLI 25 vs Web 25"
+    },
+    {
+      "name": "坏文件错误计数一致",
+      "ok": true,
+      "detail": "error=1"
+    }
+  ],
+  "note": "样本 25 · 语料 0.03MB · 总体 error"
+}

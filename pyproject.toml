@@ -68,3 +68,4 @@ torch = { index = "pytorch" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
