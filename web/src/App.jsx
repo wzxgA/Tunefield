@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api } from "./api.js";
 import { useEvents } from "./hooks/useEvents.js";
 import ChatScreen from "./screens/ChatScreen.jsx";
+import FlowCanvas from "./components/FlowCanvas.jsx";
 import ModelsScreen from "./screens/ModelsScreen.jsx";
 import ProjectsScreen from "./screens/ProjectsScreen.jsx";
 import TrainScreen from "./screens/TrainScreen.jsx";
@@ -211,13 +212,10 @@ export default function App() {
               <span className="top-spacer" />
               <span className="pill">
                 <span className="dot" />
-                Flow 画布 · 随画布任务交付
+                运行状态点亮 · 随画布运行接入
               </span>
             </div>
-            <div className="placeholder-card flow-stage">
-              整屏编排画布 · 下一任务交付：节点拖拽 / 端口连线 / 缩放适应 /
-              自动布局，运行状态由事件流驱动点亮
-            </div>
+            <FlowCanvas />
           </div>
         ) : (
           <div className="fade-in">

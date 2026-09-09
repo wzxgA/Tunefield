@@ -1,0 +1,520 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+
+// Flow 画布（W4，依 yuanxing/index-3.html 原型平移为 React）：
+// 节点 = pipeline 阶段；交互 = 拖空白平移 / 滚轮缩放 / 拖节点 / 右端口→左端口连线 /
+// 点选删除 / 适应视图 / 自动布局(拓扑排序) / 节点库点击添加 / 选中节点参数编辑。
+// 执行序由后端固定编排；本画布是流程可视化 + 参数入口 + 状态跟踪（运行状态 W5 接入）。
+
+const NODE_W = 176;
+const NODE_H = 96; // 固定高：端口位置 = (x, y + H/2)，连线纯 state 计算零滞后
+
+const ICONS = {
+  data: (
+    <>
+      <ellipse cx="12" cy="5.6" rx="7.4" ry="2.9" />
+      <path d="M4.6 5.6v12.4c0 1.6 3.3 2.9 7.4 2.9s7.4-1.3 7.4-2.9V5.6" />
+      <path d="M4.6 11.8c0 1.6 3.3 2.9 7.4 2.9s7.4-1.3 7.4-2.9" />
+    </>
+  ),
+  parse: (
+    <>
+      <path d="M4 6h11M4 12h6M4 18h13" />
+      <circle cx="18" cy="6" r="1.7" />
+      <circle cx="14" cy="12" r="1.7" />
+      <circle cx="20" cy="18" r="1.7" />
+    </>
+  ),
+  clean: (
+    <>
+      <circle cx="10.5" cy="10.5" r="6.4" />
+      <path d="M15 15 20.5 20.5" />
+    </>
+  ),
+  split: (
+    <>
+      <path d="M4 12h6.5m3 0h6.5" />
+      <path d="M10.5 8.5 14 12l-3.5 3.5" />
+    </>
+  ),
+  text: <path d="M4 7V5h16v2M12 5v14M8 19h8" />,
+  check: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M8 12.2l2.7 2.7 5.5-6" />
+    </>
+  ),
+  train: <path d="M2.5 12h3.2l2.4-6.2 3.6 12.4 2.6-6.2h7.2" />,
+  export: (
+    <>
+      <path d="M12 2.6 20 7.4v9.2l-8 4.8-8-4.8V7.4z" />
+      <path d="M4 7.4l8 4.8 8-4.8" />
+      <path d="M12 12.2V21" />
+    </>
+  ),
+  chat: (
+    <>
+      <path d="M20.8 11.9a7.9 7.9 0 0 1-11.6 6.9L4.2 20.4l1.6-4.8a7.9 7.9 0 1 1 15-3.7z" />
+      <path d="M8.4 10.2h7.2M8.4 13.4h4.6" />
+    </>
+  ),
+};
+
+// 阶段参数 schema：def 即真实默认值；split/text/train/export 的 key 与
+// POST /api/runs overrides 对齐（W5 直接读取生成请求）
+const STAGES = [
+  { key: "data", label: "数据源", sub: "DATA", params: [{ k: "pattern", label: "文件模式", def: "*.txt / pdf / code" }] },
+  { key: "parse", label: "解析", sub: "PARSE", params: [{ k: "engine", label: "解析引擎", def: "txt/md/pdf" }] },
+  { key: "clean", label: "清洗", sub: "CLEAN", params: [{ k: "rules", label: "清洗规则", def: "6 条内置" }] },
+  { key: "split", label: "切片", sub: "CHUNK", params: [{ k: "chunk_size", label: "块长 (tok)", def: "768" }, { k: "overlap", label: "重叠 (tok)", def: "96" }] },
+  { key: "text", label: "指令化", sub: "TEXT", params: [{ k: "template", label: "模板", def: "continuation" }] },
+  { key: "check", label: "质检", sub: "CHECK", params: [{ k: "dup", label: "重复率阈值", def: "0.20" }] },
+  { key: "train", label: "训练", sub: "TRAIN", params: [{ k: "engine", label: "引擎 (A/B)", def: "A" }, { k: "epochs", label: "轮次", def: "3" }] },
+  { key: "export", label: "导出", sub: "EXPORT", params: [{ k: "quants", label: "量化档位", def: "q4_k_m,q8" }] },
+  { key: "chat", label: "对话", sub: "CHAT", params: [{ k: "ollama", label: "Ollama 模型", def: "tunefield-*" }] },
+];
+
+const stageOf = (k) => STAGES.find((t) => t.key === k);
+
+const SEED_CHAIN = ["data", "parse", "clean", "split", "train", "export"];
+
+let seq = 0;
+
+function mkNode(key, x, y) {
+  const t = stageOf(key);
+  seq += 1;
+  return {
+    id: `n${seq}`,
+    key,
+    x,
+    y,
+    meta: Object.fromEntries(t.params.map((p) => [p.k, p.def])),
+  };
+}
+
+export default function FlowCanvas() {
+  const [nodes, setNodes] = useState([]);
+  const [edges, setEdges] = useState([]);
+  const [view, setView] = useState({ x: 60, y: 60, z: 1 });
+  const [selNode, setSelNode] = useState(null);
+  const [selEdge, setSelEdge] = useState(null); // "from>to"
+  const [linking, setLinking] = useState(null); // {from, mx, my, hover}
+  const [, bump] = useState(0); // 拖动后强制重算连线
+
+  const canvasRef = useRef(null);
+  const dragRef = useRef(null); // {mode:'pan'|'node'|'link', ...}
+
+  const z = view.z;
+  const toVp = useCallback(
+    (cx, cy) => {
+      const r = canvasRef.current.getBoundingClientRect();
+      return { x: (cx - r.left - view.x) / z, y: (cy - r.top - view.y) / z };
+    },
+    [view, z],
+  );
+
+  const portPos = useCallback(
+    (nodeId, side) => {
+      const n = nodes.find((x) => x.id === nodeId);
+      if (!n) return null;
+      return side === "out"
+        ? { x: n.x + NODE_W, y: n.y + NODE_H / 2 }
+        : { x: n.x, y: n.y + NODE_H / 2 };
+    },
+    [nodes],
+  );
+
+  const pathOf = useCallback(
+    (a, b) => {
+      const dx = Math.max(24, Math.abs(b.x - a.x) * 0.5);
+      return `M${a.x} ${a.y} C${a.x + dx} ${a.y}, ${b.x - dx} ${b.y}, ${b.x} ${b.y}`;
+    },
+    [],
+  );
+
+  /* ---------- 选择 / 增删 / 连线 ---------- */
+  const addEdge = useCallback((from, to) => {
+    if (!from || !to || from === to) return;
+    setEdges((es) =>
+      es.some((e) => e.from === from && e.to === to) ? es : [...es, { from, to }],
+    );
+  }, []);
+
+  const addNode = useCallback((key, vx, vy) => {
+    const n = mkNode(key, Math.round(vx), Math.round(vy));
+    setNodes((ns) => [...ns, n]);
+    setSelNode(n.id);
+    setSelEdge(null);
+    return n.id;
+  }, []);
+
+  const deleteSel = useCallback(() => {
+    if (selNode) {
+      setEdges((es) => es.filter((e) => e.from !== selNode && e.to !== selNode));
+      setNodes((ns) => ns.filter((n) => n.id !== selNode));
+      setSelNode(null);
+    } else if (selEdge) {
+      const [f, t] = selEdge.split(">");
+      setEdges((es) => es.filter((e) => !(e.from === f && e.to === t)));
+      setSelEdge(null);
+    }
+  }, [selNode, selEdge]);
+
+  /* ---------- 视图工具 ---------- */
+  const zoomAt = useCallback((cx, cy, factor) => {
+    setView((v) => {
+      const nz = Math.min(2.2, Math.max(0.25, v.z * factor));
+      const r = canvasRef.current.getBoundingClientRect();
+      const mx = cx - r.left - v.x;
+      const my = cy - r.top - v.y;
+      return { z: nz, x: cx - r.left - mx * (nz / v.z), y: cy - r.top - my * (nz / v.z) };
+    });
+  }, []);
+
+  const zoomCenter = useCallback(
+    (factor) => {
+      const r = canvasRef.current.getBoundingClientRect();
+      zoomAt(r.left + r.width / 2, r.top + r.height / 2, factor);
+    },
+    [zoomAt],
+  );
+
+  const fitView = useCallback(() => {
+    const ns = nodes;
+    const r = canvasRef.current.getBoundingClientRect();
+    if (!ns.length || !r.width) return;
+    let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+    ns.forEach((n) => {
+      x0 = Math.min(x0, n.x);
+      y0 = Math.min(y0, n.y);
+      x1 = Math.max(x1, n.x + NODE_W);
+      y1 = Math.max(y1, n.y + NODE_H);
+    });
+    const w = x1 - x0;
+    const h = y1 - y0;
+    const nz = Math.min(1.4, Math.max(0.25, Math.min(r.width / (w + 90), r.height / (h + 110))));
+    setView({
+      z: nz,
+      x: r.width / 2 - (x0 + w / 2) * nz,
+      y: r.height / 2 - (y0 + h / 2) * nz,
+    });
+  }, [nodes]);
+
+  const autoLayout = useCallback(() => {
+    if (!nodes.length) return;
+    const indeg = Object.fromEntries(nodes.map((n) => [n.id, 0]));
+    edges.forEach((e) => {
+      if (indeg[e.to] !== undefined) indeg[e.to] += 1;
+    });
+    const queue = nodes.filter((n) => indeg[n.id] === 0).map((n) => n.id);
+    const order = [];
+    while (queue.length) {
+      const id = queue.shift();
+      order.push(id);
+      edges
+        .filter((e) => e.from === id)
+        .forEach((e) => {
+          if (indeg[e.to] !== undefined) {
+            indeg[e.to] -= 1;
+            if (indeg[e.to] === 0) queue.push(e.to);
+          }
+        });
+    }
+    nodes.forEach((n) => {
+      if (!order.includes(n.id)) order.push(n.id); // 防环漏排
+    });
+    const pos = Object.fromEntries(order.map((id, i) => [id, { x: 30 + i * (NODE_W + 30), y: 180 }]));
+    setNodes((ns) => ns.map((n) => ({ ...n, ...pos[n.id] })));
+    setSelNode(null);
+    setSelEdge(null);
+    requestAnimationFrame(() => fitRef.current());
+  }, [nodes, edges]);
+
+  // fitView 闭包引用最新 nodes；自动布局后延迟调用用 ref 转发
+  const fitRef = useRef(fitView);
+  fitRef.current = fitView;
+
+  const seed = useCallback(() => {
+    const ns = [];
+    const es = [];
+    let prev = null;
+    SEED_CHAIN.forEach((key, i) => {
+      const n = mkNode(key, 40 + i * (NODE_W + 50), 150 + (i % 2 ? 46 : 0));
+      ns.push(n);
+      if (prev) es.push({ from: prev, to: n.id });
+      prev = n.id;
+    });
+    setNodes(ns);
+    setEdges(es);
+    setSelNode(null);
+    setSelEdge(null);
+    requestAnimationFrame(() => fitRef.current());
+  }, []);
+
+  useEffect(() => {
+    seed();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /* ---------- 指针交互 ---------- */
+  const nearestInPort = useCallback(
+    (pt) => {
+      let best = null;
+      let bd = 26;
+      nodes.forEach((n) => {
+        const c = { x: n.x, y: n.y + NODE_H / 2 };
+        const d = Math.hypot(c.x - pt.x, c.y - pt.y);
+        if (d < bd) {
+          bd = d;
+          best = { id: n.id, c };
+        }
+      });
+      return best;
+    },
+    [nodes],
+  );
+
+  const onCanvasPointerDown = (e) => {
+    const t = e.target;
+    if (t === canvasRef.current || t.classList?.contains("fvp") || t.classList?.contains("flinks")) {
+      dragRef.current = { mode: "pan", sx: e.clientX, sy: e.clientY, px: view.x, py: view.y };
+      setSelNode(null);
+      setSelEdge(null);
+    }
+  };
+
+  const onNodePointerDown = (e, n) => {
+    e.stopPropagation();
+    const port = e.target.closest?.(".fport");
+    if (port?.classList.contains("out")) {
+      e.preventDefault();
+      const p = toVp(e.clientX, e.clientY);
+      setLinking({ from: n.id, mx: p.x, my: p.y, hover: null });
+      dragRef.current = { mode: "link" };
+      return;
+    }
+    setSelNode(n.id);
+    setSelEdge(null);
+    e.preventDefault();
+    dragRef.current = { mode: "node", id: n.id, ox: n.x, oy: n.y, sx: e.clientX, sy: e.clientY };
+  };
+
+  useEffect(() => {
+    const onMove = (e) => {
+      const d = dragRef.current;
+      if (!d) return;
+      if (d.mode === "pan") {
+        setView((v) => ({ ...v, x: d.px + (e.clientX - d.sx), y: d.py + (e.clientY - d.sy) }));
+      } else if (d.mode === "node") {
+        const nx = d.ox + (e.clientX - d.sx) / z;
+        const ny = d.oy + (e.clientY - d.sy) / z;
+        setNodes((ns) => ns.map((n) => (n.id === d.id ? { ...n, x: nx, y: ny } : n)));
+      } else if (d.mode === "link") {
+        const p = toVp(e.clientX, e.clientY);
+        const hover = nearestInPort(p);
+        setLinking((l) => (l ? { ...l, mx: p.x, my: p.y, hover } : l));
+      }
+    };
+    const onUp = () => {
+      const d = dragRef.current;
+      if (d?.mode === "link") {
+        setLinking((l) => {
+          if (l?.hover && l.hover.id !== l.from) addEdge(l.from, l.hover.id);
+          return null;
+        });
+      }
+      dragRef.current = null;
+      bump((x) => x + 1);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+  }, [z, toVp, nearestInPort, addEdge]);
+
+  useEffect(() => {
+    const onKey = (e) => {
+      if ((e.key === "Delete" || e.key === "Backspace") && !["INPUT", "TEXTAREA"].includes(e.target.tagName)) {
+        deleteSel();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [deleteSel]);
+
+  /* ---------- 渲染 ---------- */
+  const sel = nodes.find((n) => n.id === selNode) || null;
+  const selDef = sel ? stageOf(sel.key) : null;
+
+  const setMeta = (k, v) => {
+    setNodes((ns) => ns.map((n) => (n.id === selNode ? { ...n, meta: { ...n.meta, [k]: v } } : n)));
+  };
+
+  const linkPath = linking
+    ? pathOf(
+        portPos(linking.from, "out") || { x: 0, y: 0 },
+        linking.hover ? linking.hover.c : { x: linking.mx, y: linking.my },
+      )
+    : null;
+
+  return (
+    <div className="flow-root">
+      <div className="flow-tools">
+        <button type="button" className="ws-btn" onClick={seed}>
+          重置示例
+        </button>
+        <span className="ctl" title="视图缩放">
+          <button type="button" className="zbtn" onClick={() => zoomCenter(0.82)} title="缩小">−</button>
+          <span className="zpct">{Math.round(z * 100)}%</span>
+          <button type="button" className="zbtn" onClick={() => zoomCenter(1.22)} title="放大">＋</button>
+          <span className="sep" />
+          <button type="button" className="zbtn wide" onClick={fitView} title="缩放并平移，让所有节点完整进入画布">适应视图</button>
+          <button type="button" className="zbtn wide" onClick={autoLayout} title="按连线依赖从左到右自动排布节点">自动布局</button>
+          <button type="button" className="zbtn wide" onClick={deleteSel} title="删除选中的节点或连线（Delete）">删除</button>
+        </span>
+        <span className="top-spacer" />
+        <span className="flow-stat">
+          节点 {nodes.length} · 连线 {edges.length}
+        </span>
+      </div>
+
+      <div className="flow-body">
+        <div
+          className="flow-canvas2"
+          ref={canvasRef}
+          onPointerDown={onCanvasPointerDown}
+          onWheel={(e) => {
+            e.preventDefault();
+            zoomAt(e.clientX, e.clientY, e.deltaY < 0 ? 1.12 : 0.89);
+          }}
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => {
+            e.preventDefault();
+            const key = e.dataTransfer.getData("text/plain");
+            if (stageOf(key)) {
+              const p = toVp(e.clientX, e.clientY);
+              addNode(key, p.x - NODE_W / 2, p.y - NODE_H / 2);
+            }
+          }}
+        >
+          <div
+            className="fvp"
+            style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${z})` }}
+          >
+            <svg className="flinksvg">
+              {edges.map((e) => {
+                const a = portPos(e.from, "out");
+                const b = portPos(e.to, "in");
+                if (!a || !b) return null;
+                const d = pathOf(a, b);
+                const s = selEdge === `${e.from}>${e.to}`;
+                return (
+                  <g key={`${e.from}>${e.to}`}>
+                    <path
+                      className="fhit"
+                      d={d}
+                      onPointerDown={(ev) => {
+                        ev.stopPropagation();
+                        setSelEdge(`${e.from}>${e.to}`);
+                        setSelNode(null);
+                      }}
+                    />
+                    <path className={`fline${s ? " sel" : ""}`} d={d} />
+                  </g>
+                );
+              })}
+              {linking && linkPath && <path className="ftmp" d={linkPath} />}
+            </svg>
+
+            {nodes.map((n) => {
+              const t = stageOf(n.key);
+              return (
+                <div
+                  key={n.id}
+                  className={`fnode${selNode === n.id ? " sel" : ""}`}
+                  style={{ left: n.x, top: n.y }}
+                  onPointerDown={(e) => onNodePointerDown(e, n)}
+                >
+                  <div className="fhead">
+                    <span className="fic">
+                      <svg viewBox="0 0 24 24">{ICONS[t.key]}</svg>
+                    </span>
+                    <span className="fttl">
+                      {t.label}
+                      <small>{t.sub}</small>
+                    </span>
+                  </div>
+                  <div className="fbody">
+                    {t.params.map((p) => (
+                      <div key={p.k} className="fr">
+                        <span>{p.label}</span>
+                        <b>{n.meta[p.k]}</b>
+                      </div>
+                    ))}
+                  </div>
+                  <span className="fport in" />
+                  <span className="fport out" />
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <aside className="flow-pane">
+          <div className="box">
+            <h5>节点库</h5>
+            <ul className="flow-lib">
+              {STAGES.map((t) => (
+                <li
+                  key={t.key}
+                  draggable
+                  onDragStart={(e) => e.dataTransfer.setData("text/plain", t.key)}
+                  onClick={() => addNode(t.key, 420 + Math.random() * 120 - 60, 220 + Math.random() * 120 - 60)}
+                >
+                  <span className="fic">
+                    <svg viewBox="0 0 24 24">{ICONS[t.key]}</svg>
+                  </span>
+                  <span className="fl-ttl">{t.label}</span>
+                  <span className="fl-add">＋</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+          <div className="box">
+            <h5>选中节点参数</h5>
+            {!sel ? (
+              <div className="f-empty">点击画布上的节点查看与编辑参数</div>
+            ) : (
+              <>
+                <div className="fprop">
+                  类型 <span className="v">{selDef.sub}</span>
+                </div>
+                {selDef.params.map((p) => (
+                  <label key={p.k} className="fprop fedit">
+                    {p.label}
+                    <input
+                      className="input finput"
+                      value={sel.meta[p.k] ?? ""}
+                      onChange={(e) => setMeta(p.k, e.target.value)}
+                    />
+                  </label>
+                ))}
+                <div className="fprop">
+                  坐标 <span className="v">{Math.round(sel.x)}, {Math.round(sel.y)}</span>
+                </div>
+              </>
+            )}
+          </div>
+          <div className="box">
+            <h5>说明</h5>
+            <div className="f-empty">
+              拖空白平移 · 滚轮缩放 · 拖标题移动节点 · 右端口拖到左端口连线 ·
+              Delete 删除；运行状态点亮随画布任务接入
+            </div>
+          </div>
+        </aside>
+      </div>
+    </div>
+  );
+}
