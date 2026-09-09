@@ -14,6 +14,7 @@ export default function UploadScreen() {
   const [noticeKind, setNoticeKind] = useState(""); // ok | dup | err
   const [inspect, setInspect] = useState({}); // {datasetId: bool} 展开解析预览
   const [building, setBuilding] = useState({}); // {datasetId: bool}
+  const [deletingDs, setDeletingDs] = useState(""); // 删除中的数据集 id
   const [builtTick, setBuiltTick] = useState(0); // 构建完成信号 → 刷新报告
 
   const loadDatasets = useCallback(async () => {
@@ -32,6 +33,36 @@ export default function UploadScreen() {
 
   const toggleInspect = (datasetId) =>
     setInspect((s) => ({ ...s, [datasetId]: !s[datasetId] }));
+
+  // 删除数据集（级联：任务/导出产物/原始文件，不可恢复）
+  const onDelete = async (datasetId) => {
+    const ds = datasets.find((x) => x.id === datasetId);
+    if (
+      !window.confirm(
+        `删除数据集「${ds?.name ?? datasetId}」？\n将同时删除其全部训练任务、导出产物与原始文件，且不可恢复。`
+      )
+    ) {
+      return;
+    }
+    setDeletingDs(datasetId);
+    setNotice("");
+    try {
+      await api.del(`/api/datasets/${datasetId}`);
+      await loadDatasets();
+      setInspect((s) => {
+        const next = { ...s };
+        delete next[datasetId];
+        return next;
+      });
+      setNotice("已删除数据集");
+      setNoticeKind("ok");
+    } catch (e) {
+      setNotice(`删除失败：${String(e.message || e)}`);
+      setNoticeKind("err");
+    } finally {
+      setDeletingDs("");
+    }
+  };
 
   // T6：全管线构建（解析→清洗→切片→指令化→质检 + JSONL 落盘）
   const onBuild = async (datasetId) => {
@@ -152,6 +183,15 @@ export default function UploadScreen() {
                       onClick={() => toggleInspect(d.id)}
                     >
                       {inspect[d.id] ? "收起" : "预览/报告"}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-danger"
+                      disabled={deletingDs === d.id || building[d.id]}
+                      onClick={() => onDelete(d.id)}
+                      title="删除数据集及其全部训练产物"
+                    >
+                      {deletingDs === d.id ? "删除中…" : "删除"}
                     </button>
                   </span>
                 </div>

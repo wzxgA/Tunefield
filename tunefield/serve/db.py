@@ -176,6 +176,41 @@ def append_loss(job_id: str, loss: str) -> None:
         )
 
 
+def jobs_by_dataset(dataset_id: str) -> list[dict[str, Any]]:
+    """某数据集下的全部训练任务（供级联删除）。"""
+    with transaction() as conn:
+        rows = conn.execute(
+            "SELECT * FROM training_jobs WHERE dataset_id = ? ORDER BY created_at",
+            (dataset_id,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def delete_job(job_id: str) -> None:
+    with transaction() as conn:
+        conn.execute("DELETE FROM training_jobs WHERE id = ?", (job_id,))
+
+
+def delete_pipeline_run(run_id: str) -> None:
+    with transaction() as conn:
+        conn.execute("DELETE FROM pipeline_runs WHERE id = ?", (run_id,))
+
+
+def delete_dataset(dataset_id: str) -> None:
+    with transaction() as conn:
+        conn.execute("DELETE FROM datasets WHERE id = ?", (dataset_id,))
+
+
+def delete_adapter(adapter_id: str) -> None:
+    with transaction() as conn:
+        conn.execute("DELETE FROM adapters WHERE id = ?", (adapter_id,))
+
+
+def delete_quantized_model(model_id: str) -> None:
+    with transaction() as conn:
+        conn.execute("DELETE FROM quantized_models WHERE id = ?", (model_id,))
+
+
 def jobs_by_status(statuses: Sequence[str]) -> list[dict[str, Any]]:
     placeholders = ",".join("?" for _ in statuses)
     with transaction() as conn:

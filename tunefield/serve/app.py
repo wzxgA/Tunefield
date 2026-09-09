@@ -94,6 +94,21 @@ def create_app(handler=None) -> FastAPI:
             return JSONResponse({"detail": "dataset not found"}, status_code=404)
         return ds
 
+    @app.delete("/api/datasets/{dataset_id}", tags=["datasets"])
+    async def delete_dataset(dataset_id: str):
+        """删除数据集：级联其全部任务/端到端 run、原始文件与管线产物。"""
+        from tunefield.engine.base import EngineError
+        from tunefield.serve.maintenance import purge_dataset
+
+        try:
+            return await run_in_threadpool(
+                purge_dataset, dataset_id, remove_ollama=True
+            )
+        except EngineError as exc:
+            msg = str(exc)
+            status = 409 if "正在执行" in msg else 404 if "不存在" in msg else 400
+            return JSONResponse({"detail": msg}, status_code=status)
+
     @app.get("/api/datasets/{dataset_id}/files", tags=["datasets"])
     async def dataset_files(dataset_id: str):
         """T2：逐文件解析状态 + 中间文本预览（pdf/docx/代码等结构化解析结果）。
@@ -399,6 +414,19 @@ def create_app(handler=None) -> FastAPI:
 
         job["log"] = log_tail(job_id, 120)  # 进程内日志尾部（重启后为空，仅恢复展示）
         return job
+
+    @app.delete("/api/jobs/{job_id}", tags=["jobs"])
+    async def delete_job(job_id: str):
+        """删除训练任务：行 + 适配器/GGUF 产物 + 关联 run + 可选 Ollama 模型。"""
+        from tunefield.engine.base import EngineError
+        from tunefield.serve.maintenance import purge_job
+
+        try:
+            return await run_in_threadpool(purge_job, job_id, remove_ollama=True)
+        except EngineError as exc:
+            msg = str(exc)
+            status = 409 if "正在执行" in msg else 404 if "不存在" in msg else 400
+            return JSONResponse({"detail": msg}, status_code=status)
 
     @app.post("/api/jobs", tags=["jobs"])
     async def create_job(body: dict):

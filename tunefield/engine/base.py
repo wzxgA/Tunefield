@@ -169,6 +169,12 @@ def log_tail(job_id: str, limit: int = 120) -> list[str]:
         return list(ring)[-limit:]
 
 
+def log_forget(ref: str) -> None:
+    """删除某 job/run 的进程内日志环（清理任务时调用）。"""
+    with _log_lock:
+        _log_rings.pop(ref, None)
+
+
 # LLaMA-Factory / HF Trainer 常见日志形态（容错解析，失败不影响训练）
 _LOSS_RE = [
     re.compile(r"['\"]loss['\"]\s*:\s*([0-9]+\.?[0-9]*(?:e[-+]?[0-9]+)?)", re.IGNORECASE),

@@ -476,6 +476,33 @@ body {
   cursor: default;
 }
 
+/* 删除/危险操作按钮 */
+.btn-danger {
+  height: 24px;
+  padding: 0 10px;
+  border: 1px solid #e0cfc4;
+  border-radius: 6px;
+  background: #faf3ee;
+  color: var(--err);
+  font: 400 12px var(--font-sans);
+  cursor: pointer;
+  transition: all var(--dur) var(--ease);
+}
+
+.btn-danger:hover:not(:disabled) {
+  border-color: var(--err);
+  background: #f3e3dd;
+}
+
+.btn-danger:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.detail-tools {
+  margin: var(--gap-xs) 0 var(--gap-sm);
+}
+
 .form-error {
   margin: 0 0 var(--gap-sm);
   color: var(--err);

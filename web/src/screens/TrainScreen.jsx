@@ -70,6 +70,7 @@ export default function TrainScreen() {
   const [createError, setCreateError] = useState("");
   const [models, setModels] = useState([]); // T9 GGUF 清单
   const [exporting, setExporting] = useState(false);
+  const [deletingJob, setDeletingJob] = useState(false);
 
   // T11 端到端 run
   const [runs, setRuns] = useState([]);
@@ -286,6 +287,30 @@ export default function TrainScreen() {
     [jobs, selectedId]
   );
   const points = lossMap[selectedId] ?? [];
+
+  // 删除训练任务（行 + 适配器/GGUF 产物 + 关联 run；运行中禁删）
+  const onDeleteJob = async (jobId) => {
+    if (
+      !window.confirm(
+        `删除训练任务？\n将同时删除其适配器权重、GGUF 导出产物与记录，且不可恢复。`
+      )
+    ) {
+      return;
+    }
+    setDeletingJob(true);
+    setCreateError("");
+    try {
+      await api.del(`/api/jobs/${jobId}`);
+      const nextJobs = jobs.filter((j) => j.id !== jobId);
+      setJobs(nextJobs);
+      setSelectedId((cur) => (cur === jobId ? (nextJobs.at(-1)?.id ?? null) : cur));
+      await loadModels();
+    } catch (e) {
+      setCreateError(`删除失败：${String(e.message || e)}`);
+    } finally {
+      setDeletingJob(false);
+    }
+  };
 
   const createJob = async () => {
     setCreating(true);
@@ -527,6 +552,24 @@ export default function TrainScreen() {
               <div className="detail-meta">
                 <span>任务 {selected.id}</span>
                 <span>{selected.kind === "pretrain" ? "从零预训练" : "微调"}</span>
+              </div>
+              <div className="detail-tools">
+                <button
+                  type="button"
+                  className="btn-danger"
+                  disabled={
+                    deletingJob ||
+                    ["queued", "pending_gpu", "running"].includes(selected.status)
+                  }
+                  onClick={() => onDeleteJob(selected.id)}
+                  title={
+                    ["queued", "pending_gpu", "running"].includes(selected.status)
+                      ? "任务运行中，需等待结束后删除"
+                      : "删除任务及其适配器/GGUF 产物"
+                  }
+                >
+                  {deletingJob ? "删除中…" : "删除任务"}
+                </button>
               </div>
               {selected.error && <p className="detail-error">{selected.error}</p>}
               {selected.status === "done" && (
