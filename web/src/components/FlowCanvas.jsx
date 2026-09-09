@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { api } from "../api";
+import { useEvents } from "../hooks/useEvents.js";
 
 // Flow 画布（W4，依 yuanxing/index-3.html 原型平移为 React）：
 // 节点 = pipeline 阶段；交互 = 拖空白平移 / 滚轮缩放 / 拖节点 / 右端口→左端口连线 /
@@ -77,6 +79,33 @@ const stageOf = (k) => STAGES.find((t) => t.key === k);
 
 const SEED_CHAIN = ["data", "parse", "clean", "split", "train", "export"];
 
+// 节点 → 端到端 run 阶段（engine/flow.py 的 timeline key）映射
+const PHASE_OF = {
+  data: "build",
+  parse: "build",
+  clean: "build",
+  split: "build",
+  text: "build",
+  check: "build",
+  train: "train",
+  export: "export",
+  chat: "import",
+};
+
+// run 行规范化：timeline_json（create_run 返回字符串）→ timeline 数组
+function normalizeRun(r) {
+  if (!r) return null;
+  let tl = r.timeline;
+  if (typeof tl === "string") {
+    try {
+      tl = JSON.parse(tl);
+    } catch {
+      tl = [];
+    }
+  }
+  return { ...r, timeline: Array.isArray(tl) ? tl : [] };
+}
+
 let seq = 0;
 
 function mkNode(key, x, y) {
@@ -91,7 +120,7 @@ function mkNode(key, x, y) {
   };
 }
 
-export default function FlowCanvas() {
+export default function FlowCanvas({ dataset }) {
   const [nodes, setNodes] = useState([]);
   const [edges, setEdges] = useState([]);
   const [view, setView] = useState({ x: 60, y: 60, z: 1 });
@@ -99,6 +128,103 @@ export default function FlowCanvas() {
   const [selEdge, setSelEdge] = useState(null); // "from>to"
   const [linking, setLinking] = useState(null); // {from, mx, my, hover}
   const [, bump] = useState(0); // 拖动后强制重算连线
+  const [run, setRun] = useState(null); // 当前/最近端到端 run（W5）
+  const [history, setHistory] = useState([]);
+  const [launching, setLaunching] = useState(false);
+  const [notice, setNotice] = useState(""); // {kind, text}
+
+  /* ---------- run 加载 / 发起（W5） ---------- */
+  const loadRuns = useCallback(async () => {
+    if (!dataset) return;
+    try {
+      const all = await api.get("/api/runs");
+      const mine = (Array.isArray(all) ? all : [])
+        .filter((r) => r.dataset_id === dataset.id)
+        .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+      setHistory(mine.slice(0, 5));
+      setRun(normalizeRun(mine[0] || null));
+    } catch {
+      /* 后端未就绪保持空态 */
+    }
+  }, [dataset]);
+
+  useEffect(() => {
+    loadRuns();
+  }, [loadRuns]);
+
+  // 从画布节点参数生成 overrides（缺失的节点用后端默认）
+  const readOverrides = useCallback(() => {
+    const byKey = Object.fromEntries(nodes.map((n) => [n.key, n.meta]));
+    const num = (v) => {
+      const n = parseInt(v, 10);
+      return Number.isFinite(n) ? n : undefined;
+    };
+    return {
+      ...(byKey.split?.chunk_size ? { chunk_size: num(byKey.split.chunk_size) } : {}),
+      ...(byKey.split?.overlap ? { overlap: num(byKey.split.overlap) } : {}),
+      ...(byKey.text?.template ? { template: byKey.text.template } : {}),
+      ...(byKey.train?.epochs ? { epochs: num(byKey.train.epochs) } : {}),
+    };
+  }, [nodes]);
+
+  const onRun = useCallback(async () => {
+    if (!dataset || launching) return;
+    setLaunching(true);
+    setNotice(null);
+    try {
+      const created = await api.post("/api/runs", {
+        dataset_id: dataset.id,
+        auto_import: true,
+        ...readOverrides(),
+      });
+      setRun(normalizeRun(created));
+      setNotice({ kind: "ok", text: `已发起端到端 run ${String(created.id).slice(0, 8)}…` });
+      loadRuns();
+    } catch (e) {
+      setNotice({ kind: "err", text: `发起失败：${String(e.message || e)}` });
+    } finally {
+      setLaunching(false);
+    }
+  }, [dataset, launching, readOverrides, loadRuns]);
+
+  // 事件流：run.stage 点亮阶段、run.status 推进状态（终态回读权威数据）
+  useEvents((msg) => {
+    const d = msg.data || {};
+    if (!run || d.id !== run.id) return;
+    if (msg.type === "run.stage") {
+      setRun((r) => {
+        if (!r || d.id !== r.id) return r;
+        const tl = [...r.timeline];
+        const i = tl.findIndex((p) => p.key === d.key);
+        const ph = {
+          key: d.key,
+          label: d.label,
+          status: d.status,
+          started_at: d.started_at,
+          finished_at: d.finished_at ?? null,
+          duration_s: d.duration_s ?? null,
+          detail: d.detail ?? null,
+        };
+        if (i >= 0) tl[i] = { ...tl[i], ...ph };
+        else tl.push(ph);
+        return { ...r, timeline: tl };
+      });
+    } else if (msg.type === "run.status") {
+      setRun((r) => (r && d.id === r.id ? { ...r, status: d.status, progress: d.progress, error: d.error } : r));
+      if (d.status === "done" || d.status === "failed") loadRuns();
+    }
+  });
+
+  // 节点四态：由 run.timeline 的阶段状态聚合而来
+  const nodeState = useCallback(
+    (n) => {
+      if (!run) return "idle";
+      const ph = run.timeline.find((p) => p.key === PHASE_OF[n.key]);
+      if (!ph) return run.status === "running" ? "idle" : "idle";
+      return ph.status || "idle"; // ok | failed | skipped | running
+    },
+    [run],
+  );
 
   const canvasRef = useRef(null);
   const dragRef = useRef(null); // {mode:'pan'|'node'|'link', ...}
@@ -361,9 +487,23 @@ export default function FlowCanvas() {
   return (
     <div className="flow-root">
       <div className="flow-tools">
-        <button type="button" className="ws-btn" onClick={seed}>
-          重置示例
+        <button
+          type="button"
+          className="ws-btn primary"
+          onClick={onRun}
+          disabled={launching || run?.status === "running"}
+          title="以画布参数发起端到端 run（构建 → 训练 → 导出 → 导入）"
+        >
+          {run?.status === "running" ? "运行中…" : launching ? "发起中…" : "运行流水线"}
         </button>
+        {run && (
+          <span className="pill" title={run.error || undefined}>
+            <span className={`dot ${run.status === "done" ? "ok" : run.status === "failed" ? "off" : ""}`} />
+            run {String(run.id).slice(0, 6)} · {Math.round((Number(run.progress) || 0) * 100)}% · {run.status}
+          </span>
+        )}
+        {notice && <span className={`notice n-${notice.kind} flow-notice`}>{notice.text}</span>}
+        <span className="top-spacer" />
         <span className="ctl" title="视图缩放">
           <button type="button" className="zbtn" onClick={() => zoomCenter(0.82)} title="缩小">−</button>
           <span className="zpct">{Math.round(z * 100)}%</span>
@@ -429,13 +569,23 @@ export default function FlowCanvas() {
 
             {nodes.map((n) => {
               const t = stageOf(n.key);
+              const st = nodeState(n);
+              const ph = run?.timeline.find((p) => p.key === PHASE_OF[n.key]);
+              const stLabel = { running: "运行中", ok: "完成", failed: "失败", skipped: "跳过" }[st];
               return (
                 <div
                   key={n.id}
-                  className={`fnode${selNode === n.id ? " sel" : ""}`}
+                  className={`fnode${selNode === n.id ? " sel" : ""}${st !== "idle" ? ` st-${st}` : ""}`}
                   style={{ left: n.x, top: n.y }}
                   onPointerDown={(e) => onNodePointerDown(e, n)}
+                  title={ph?.detail || undefined}
                 >
+                  {st !== "idle" && (
+                    <span className={`fstate ${st}`}>
+                      {stLabel}
+                      {ph?.duration_s != null ? ` ${ph.duration_s}s` : ""}
+                    </span>
+                  )}
                   <div className="fhead">
                     <span className="fic">
                       <svg viewBox="0 0 24 24">{ICONS[t.key]}</svg>
@@ -507,10 +657,28 @@ export default function FlowCanvas() {
             )}
           </div>
           <div className="box">
+            <h5>运行历史</h5>
+            {history.length === 0 ? (
+              <div className="f-empty">暂无 run · 点「运行流水线」发起端到端</div>
+            ) : (
+              <ul className="rh-list">
+                {history.map((r) => (
+                  <li key={r.id}>
+                    <span className={`rh-st st-${r.status}`}>
+                      {{ done: "完成", failed: "失败", running: "运行中", queued: "排队中", pending_gpu: "等GPU" }[r.status] || r.status}
+                    </span>
+                    <span className="rh-id">{String(r.id).slice(0, 6)}</span>
+                    <span className="rh-p">{Math.round((Number(r.progress) || 0) * 100)}%</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <div className="box">
             <h5>说明</h5>
             <div className="f-empty">
               拖空白平移 · 滚轮缩放 · 拖标题移动节点 · 右端口拖到左端口连线 ·
-              Delete 删除；运行状态点亮随画布任务接入
+              Delete 删除；运行时节点按阶段点亮（构建→训练→导出→导入）
             </div>
           </div>
         </aside>

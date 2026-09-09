@@ -211,11 +211,11 @@ export default function App() {
               <span className="flow-title">{flowProject.name}</span>
               <span className="top-spacer" />
               <span className="pill">
-                <span className="dot" />
-                运行状态点亮 · 随画布运行接入
+                <span className={`dot ${flowProject.status === "built" ? "ok" : "off"}`} />
+                {flowProject.status === "built" ? "已构建 · 可运行" : "未构建 · 运行时自动构建"}
               </span>
             </div>
-            <FlowCanvas />
+            <FlowCanvas dataset={flowProject} />
           </div>
         ) : (
           <div className="fade-in">
