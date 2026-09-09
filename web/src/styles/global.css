@@ -2013,6 +2013,59 @@ body::before {
   font-variant-numeric: tabular-nums;
 }
 
+/* 视图工具组（缩放/适应/布局/删除）——原型移植，缺失会导致原生按钮样式 */
+.ctl {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--stroke);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.zbtn {
+  appearance: none;
+  border: none;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  width: 26px;
+  height: 24px;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  transition: all var(--dur) var(--ease);
+}
+
+.zbtn:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.zbtn.wide {
+  width: auto;
+  padding: 0 10px;
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+}
+
+.zpct {
+  min-width: 46px;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.ctl .sep {
+  width: 1px;
+  height: 14px;
+  background: var(--stroke-soft);
+  margin: 0 2px;
+}
+
 .flow-body {
   flex: 1;
   min-height: 0;
