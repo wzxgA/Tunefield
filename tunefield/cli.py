@@ -87,11 +87,14 @@ def _parse_overrides(items: list[str]) -> dict:
 
 
 def _train(args: argparse.Namespace) -> int:
-    """T8：--dry-run 输出显存/数据量 → 推荐配置（不训练）。
+    """T8/T13：--dry-run 输出显存/数据量 → 推荐配置（不训练）。
 
-    真实训练经 Web 平台（tunefield serve）创建任务；CLI 训练通道随 T11 串联交付。
+    --kind pretrain 走引擎 B 档位表（规模/结构）；真实训练经 Web 平台或一键 run。
     """
-    from tunefield.engine.recommender import dry_run_lines, recommend_for_dataset
+    from tunefield.engine.recommender import (
+        dry_run_lines, dry_run_lines_pretrain,
+        recommend_for_dataset, recommend_pretrain_for_dataset,
+    )
     from tunefield.pipeline.build import lookup_dataset
 
     if not args.dry_run:
@@ -101,11 +104,17 @@ def _train(args: argparse.Namespace) -> int:
         return 1
     try:
         dataset = lookup_dataset(args.dataset)
-        rec = recommend_for_dataset(dataset, _parse_overrides(args.overrides))
+        overrides = _parse_overrides(args.overrides)
+        if args.kind == "pretrain":
+            rec = recommend_pretrain_for_dataset(dataset, overrides)
+            lines = dry_run_lines_pretrain(rec)
+        else:
+            rec = recommend_for_dataset(dataset, overrides)
+            lines = dry_run_lines(rec)
     except (ValueError, FileNotFoundError) as exc:
         print(f"[train] 失败：{exc}")
         return 1
-    for line in dry_run_lines(rec):
+    for line in lines:
         print(line)
     return 0
 
@@ -369,6 +378,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("train", help="训练配置预览（--dry-run）/ 真实训练走 Web 平台")
     p.add_argument("dataset", help="dataset id 或名称")
+    p.add_argument("--kind", choices=("finetune", "pretrain"), default="finetune",
+                   help="引擎类型：finetune 微调（默认）| pretrain 从零预训练")
     p.add_argument(
         "--dry-run",
         action="store_true",

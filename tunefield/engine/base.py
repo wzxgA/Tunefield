@@ -176,7 +176,9 @@ _LOSS_RE = [
 ]
 _EPOCH_RE = re.compile(r"['\"]epoch['\"]\s*:\s*([0-9]+\.?[0-9]*)", re.IGNORECASE)
 _STEP_RE = re.compile(r"['\"]step['\"]\s*:\s*(\d+)", re.IGNORECASE)
-_OOM_RE = re.compile(r"out of memory|CUDA out of memory|OOM", re.IGNORECASE)
+# 整词匹配避免普通词误判（如 boom/bloom 含 "oom" 子串）；"out of memory"
+# 与 CUDA 变体本身是短语无需词界
+_OOM_RE = re.compile(r"CUDA out of memory|\bout of memory\b|\bOOM\b", re.IGNORECASE)
 
 
 def parse_train_line(line: str) -> dict | None:

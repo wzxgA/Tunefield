@@ -98,6 +98,15 @@ def run_build(
     jsonl_text = "\n".join(to_jsonl_line(r) for r in records) + "\n"
     jsonl_path = _write_dataset_out(dataset, jsonl_text)
 
+    # T13：同时沉淀纯文本语料（逐块文本，块间空行分隔），供引擎 B 从零预训练
+    # （预训练不需要 Alpaca 指令形态，只吃原始文本序列）。
+    corpus_dir = config.DATASETS_DIR / dataset["id"]
+    corpus_dir.mkdir(parents=True, exist_ok=True)
+    corpus_path = corpus_dir / "corpus.txt"
+    corpus_path.write_text(
+        "\n\n".join(t for t in cleaned_texts if t) + "\n", encoding="utf-8"
+    )
+
     report = evaluate(
         dataset_name=dataset.get("name") or dataset["id"],
         corpus_bytes=corpus_bytes,
@@ -116,4 +125,5 @@ def run_build(
 
     db.set_dataset_built(dataset["id"], json.dumps(report, ensure_ascii=False))
     updated = db.get_dataset(dataset["id"])
-    return {"dataset": updated, "train_jsonl": str(jsonl_path), "report": report}
+    return {"dataset": updated, "train_jsonl": str(jsonl_path), "report": report,
+            "corpus_path": str(corpus_path)}

@@ -1,7 +1,7 @@
 """T7 · 引擎注册表：按 training_jobs.kind 路由到具体引擎。
 
-当前注册：kind=finetune → LLaMA-Factory（引擎 A）。
-引擎 B（kind=pretrain，从零预训练）由 T13 接入。
+当前注册：kind=finetune → LLaMA-Factory（引擎 A）；kind=pretrain → 从零预训练
+（引擎 B，T13）。各引擎在 import 其包时自动注册（llmfactory/pretrain）。
 """
 
 from __future__ import annotations
@@ -24,9 +24,9 @@ def register(engine: BaseEngine) -> None:
 def get_engine(kind: str) -> BaseEngine:
     engine = _ENGINES.get(kind)
     if engine is None:
-        hint = "（从零预训练引擎将在 T13 接入）" if kind == "pretrain" else ""
         raise EngineNotFound(
-            f"未知训练引擎 kind={kind!r}{hint}；当前已注册：{sorted(_ENGINES) or '无'}"
+            f"未知训练引擎 kind={kind!r}；当前已注册：{sorted(_ENGINES) or '无'}（"
+            "引擎经 import 包自动注册）"
         )
     return engine
 

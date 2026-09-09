@@ -12,7 +12,7 @@ import json
 import logging
 
 from tunefield.engine import registry
-from tunefield.engine.base import EngineError, EngineNotFound
+from tunefield.engine.base import EngineError
 from tunefield.serve import db
 
 logger = logging.getLogger(__name__)
@@ -30,8 +30,9 @@ def _load_cfg(job: dict) -> dict:
 
 
 def create_train_handler():
-    """默认任务处理函数：按 job.kind 交给对应引擎（引擎 A 微调）。"""
+    """默认任务处理函数：按 job.kind 交给对应引擎（A 微调 / B 从零预训练）。"""
     from tunefield.engine import llmfactory  # noqa: F401  # 注册引擎 A
+    from tunefield.engine import pretrain  # noqa: F401  # 注册引擎 B
 
     async def handler(job_id: str) -> None:
         job = db.get_job(job_id)
@@ -39,10 +40,6 @@ def create_train_handler():
             logger.warning("任务 %s 不存在，跳过", job_id)
             return
         kind = job.get("kind") or "finetune"
-        if kind == "pretrain":
-            raise EngineNotFound(
-                "从零预训练引擎（kind=pretrain）将在 T13 接入；当前请使用 kind=finetune"
-            )
         if not job.get("dataset_id"):
             raise EngineError("任务缺少 dataset_id：请从「已构建」的数据集创建训练任务")
 

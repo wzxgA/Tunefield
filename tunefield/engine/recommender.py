@@ -157,3 +157,97 @@ def dry_run_lines(rec: dict) -> list[str]:
         lines.append(f"[train] 用户覆盖：{', '.join(meta['overridden'])}")
     lines.append("[train] dry-run 结束（未创建任务/未训练）")
     return lines
+
+
+# ---------------------------------------------------------------------------
+# T13 · 从零预训练（引擎 B）配置推荐
+# ---------------------------------------------------------------------------
+
+# 档位表（B4.3）：规模/层数/hidden 由档位给出，显存未知落最小档
+PRETRAIN_TIERS: list[dict] = [
+    {"max_gb": 6, "label": "~100M", "scale": "100M",
+     "hidden_size": 512, "intermediate_size": 2048,
+     "num_hidden_layers": 8, "num_attention_heads": 8},
+    {"max_gb": 8, "label": "~200M", "scale": "200M",
+     "hidden_size": 768, "intermediate_size": 3072,
+     "num_hidden_layers": 12, "num_attention_heads": 12},
+    {"max_gb": None, "label": "~400M", "scale": "400M",
+     "hidden_size": 896, "intermediate_size": 3584,
+     "num_hidden_layers": 16, "num_attention_heads": 16},
+]
+
+PRETRAIN_KEYS = (
+    "scale", "hidden_size", "intermediate_size", "num_hidden_layers",
+    "num_attention_heads", "epochs", "learning_rate", "seq_len",
+    "per_device_batch_size", "gradient_accumulation_steps",
+    "logging_steps", "save_steps", "seed",
+)
+
+
+def pick_pretrain_tier(vram_gb: float | None) -> dict:
+    """按显存选预训练档位；未知显存落最保守的最小档。"""
+    if vram_gb is None:
+        return PRETRAIN_TIERS[0]
+    for tier in PRETRAIN_TIERS:
+        if tier["max_gb"] is None or vram_gb <= tier["max_gb"]:
+            return tier
+    return PRETRAIN_TIERS[-1]
+
+
+def recommend_pretrain(
+    vram_gb: float | None, corpus_mb: float | None, overrides: dict | None = None,
+) -> dict:
+    """从零预训练推荐配置（引擎 B）：完整权重、无基座、无指令化。"""
+    tier = pick_pretrain_tier(vram_gb)
+    cfg: dict = {
+        "scale": tier["scale"],
+        "hidden_size": tier["hidden_size"],
+        "intermediate_size": tier["intermediate_size"],
+        "num_hidden_layers": tier["num_hidden_layers"],
+        "num_attention_heads": tier["num_attention_heads"],
+        "epochs": epochs_for(corpus_mb),  # 小语料多轮过采样补足步数
+        "learning_rate": 3e-4,
+        "seq_len": 512,
+        "per_device_batch_size": 1,
+        "gradient_accumulation_steps": 8,
+        "logging_steps": 1,  # 每步打 loss，小任务也实时出曲线
+        "save_steps": 200,
+        "seed": 42,
+    }
+    for k, v in (overrides or {}).items():
+        if v is not None and k in PRETRAIN_KEYS:
+            cfg[k] = v
+    cfg["_meta"] = {
+        "vram_gb": vram_gb,
+        "tier": tier["label"],
+        "corpus_mb": corpus_mb,
+        "scale": tier["scale"],
+        "overridden": sorted(
+            k for k in (overrides or {})
+            if k in PRETRAIN_KEYS and (overrides or {})[k] is not None
+        ),
+    }
+    return cfg
+
+
+def recommend_pretrain_for_dataset(dataset: dict, overrides: dict | None = None) -> dict:
+    """便捷入口：自动探测显存 + 从数据集质检报告取语料量。"""
+    return recommend_pretrain(detect_vram_gb(), _corpus_mb_from_dataset(dataset), overrides)
+
+
+def dry_run_lines_pretrain(rec: dict) -> list[str]:
+    """`--dry-run`（引擎 B）展示文本。"""
+    meta = rec.get("_meta", {})
+    lines = [
+        f"[train] 预训练档位：{meta.get('tier')}（探测 {meta.get('vram_gb')}GB）"
+        f" · 语料 {meta.get('corpus_mb')}MB",
+        f"[train] 规模：{rec['scale']} · 结构：hidden {rec['hidden_size']} / "
+        f"layers {rec['num_hidden_layers']} / heads {rec['num_attention_heads']}",
+        f"[train] 轮次：{rec['epochs']} · 学习率：{rec['learning_rate']} · seq_len：{rec['seq_len']}",
+        f"[train] batch：{rec['per_device_batch_size']}×{rec['gradient_accumulation_steps']}（累计）"
+        f" · logging_steps：{rec['logging_steps']}",
+    ]
+    if meta.get("overridden"):
+        lines.append(f"[train] 用户覆盖：{', '.join(meta['overridden'])}")
+    lines.append("[train] dry-run 结束（未创建任务/未训练）")
+    return lines

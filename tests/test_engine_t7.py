@@ -56,8 +56,10 @@ def test_registry_routes_and_missing_kind():
 
     registry.register(LlmFactoryEngine())
     assert registry.get_engine("finetune").kind == "finetune"
-    with pytest.raises(EngineNotFound, match="pretrain"):
-        registry.get_engine("pretrain")  # T13 接入
+    # T13：导入引擎 B 包即注册 kind=pretrain
+    import tunefield.engine.pretrain  # noqa: F401  # 触发引擎 B 注册
+
+    assert registry.get_engine("pretrain").kind == "pretrain"
     with pytest.raises(EngineNotFound):
         registry.get_engine("unknown-kind")
 

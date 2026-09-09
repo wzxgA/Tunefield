@@ -87,18 +87,19 @@ class Exporter:
         job_id = job["id"]
         domain = job.get("domain") or "model"
         workdir = config.ADAPTERS_DIR / domain / job_id
-        adapter_file = workdir / "adapter_model.safetensors"
-        if not adapter_file.exists():
-            raise EngineError(
-                f"任务 {job_id} 没有可导出的适配器权重（{adapter_file} 不存在），请先完成训练"
-            )
+        is_pretrain = (job.get("kind") == "pretrain")
+        if not is_pretrain:
+            adapter_file = workdir / "adapter_model.safetensors"
+            if not adapter_file.exists():
+                raise EngineError(
+                    f"任务 {job_id} 没有可导出的适配器权重（{adapter_file} 不存在），请先完成训练"
+                )
 
         base_model = job.get("base_model") or (engine_base_pinned() or {}).get("base") or ""
         version = job_id[:8]
         slug = registry.slugify(domain)  # 文件名一律 ASCII;domain 原名仅进指纹与展示
         gguf_dir = config.GGUF_DIR
         gguf_dir.mkdir(parents=True, exist_ok=True)
-        merged = gguf_dir / f"{slug}-{version}-merged"
 
         def stage(msg: str) -> None:
             log_append(job_id, msg)
@@ -108,30 +109,43 @@ class Exporter:
             lines = [ln for ln in out.splitlines() if ln.strip()]
             return "\n".join(lines[-n:])
 
-        # ---- 1. 合并 LoRA ----
-        stage("[export] 1/3 合并 LoRA → 基座 …")
         try:
             job_cfg = json.loads(job.get("config_json") or "{}")
         except (ValueError, TypeError):
             job_cfg = {}
-        template = job_cfg.get("template") or "qwen"
-        merge_cli = (
-            os.environ.get("TUNEFIELD_LLAMAFACTORY_BIN") or "llamafactory-cli"
-        )
-        rc, out = self._run([
-            merge_cli, "export",
-            "--model_name_or_path", base_model,
-            "--adapter_name_or_path", str(workdir),
-            "--template", template,
-            "--export_dir", str(merged),
-            "--export_size", "2",
-            "--export_device", "cpu",
-            "--export_legacy_format", "false",
-        ])
-        for line in tail_of(out, 6).splitlines():
-            log_append(job_id, line)
-        if rc != 0 or not (merged / "config.json").exists():
-            raise EngineError(f"LoRA 合并失败（rc={rc}）：\n{tail_of(out)}")
+
+        # ---- 1. 取可导出完整权重目录 ----
+        #   T13 预训练产物本就是完整权重（train.py save_model），跳过 LoRA 合并；
+        #   微调产物先合并 LoRA → 基座得到完整权重，两路在此后归一并走 GGUF 转换。
+        if is_pretrain:
+            merged = workdir
+            if not (merged / "config.json").exists():
+                raise EngineError(
+                    f"预训练任务 {job_id} 没有可导出的完整权重"
+                    f"（{merged} 缺 config.json），请先完成训练"
+                )
+            stage("[export] 1/3 使用预训练完整权重（跳过 LoRA 合并）…")
+        else:
+            stage("[export] 1/3 合并 LoRA → 基座 …")
+            merged = gguf_dir / f"{slug}-{version}-merged"
+            template = job_cfg.get("template") or "qwen"
+            merge_cli = (
+                os.environ.get("TUNEFIELD_LLAMAFACTORY_BIN") or "llamafactory-cli"
+            )
+            rc, out = self._run([
+                merge_cli, "export",
+                "--model_name_or_path", base_model,
+                "--adapter_name_or_path", str(workdir),
+                "--template", template,
+                "--export_dir", str(merged),
+                "--export_size", "2",
+                "--export_device", "cpu",
+                "--export_legacy_format", "false",
+            ])
+            for line in tail_of(out, 6).splitlines():
+                log_append(job_id, line)
+            if rc != 0 or not (merged / "config.json").exists():
+                raise EngineError(f"LoRA 合并失败（rc={rc}）：\n{tail_of(out)}")
 
         # ---- 2. GGUF 转换 ----
         stage("[export] 2/3 转换 GGUF（f16）…")

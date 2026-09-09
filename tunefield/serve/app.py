@@ -238,16 +238,26 @@ def create_app(handler=None) -> FastAPI:
 
     # ---------------- 任务路由（T7 起接真实引擎编排） ----------------
     @app.get("/api/train/preview", tags=["jobs"])
-    async def train_preview(dataset_id: str):
-        """T8：按显存档位 + 数据集体量给出训练参数推荐（供前端面板预览/覆盖）。"""
+    async def train_preview(dataset_id: str, kind: str = "finetune"):
+        """T8/T13：按显存档位 + 数据集体量给出训练参数推荐（前端面板预览/覆盖）。
+
+        kind=finetune 走微调推荐器（基座/LoRA）；kind=pretrain 走引擎 B 档位表。
+        """
         ds = db.get_dataset(dataset_id)
         if ds is None:
             return JSONResponse({"detail": "dataset not found"}, status_code=404)
-        from tunefield.engine.recommender import recommend_for_dataset
+        if kind == "pretrain":
+            from tunefield.engine.recommender import recommend_pretrain_for_dataset
 
+            recommend = recommend_pretrain_for_dataset(ds)
+        else:
+            from tunefield.engine.recommender import recommend_for_dataset
+
+            recommend = recommend_for_dataset(ds)
         return {
-            "dataset": {"id": ds["id"], "name": ds["name"], "status": ds["status"]},
-            "recommend": recommend_for_dataset(ds),
+            "dataset": {"id": ds["id"], "name": ds["name"], "status": ds["status"],
+                        "kind": kind},
+            "recommend": recommend,
         }
 
     @app.post("/api/jobs/{job_id}/export", tags=["jobs"])
@@ -370,9 +380,9 @@ def create_app(handler=None) -> FastAPI:
         import json as _json
 
         kind = body.get("kind", "finetune")
-        if kind == "pretrain":
+        if kind not in ("finetune", "pretrain"):
             return JSONResponse(
-                {"detail": "从零预训练引擎（kind=pretrain）将在 T13 接入，当前仅支持微调 finetune"},
+                {"detail": f"未知训练引擎 kind={kind!r}（可选 finetune | pretrain）"},
                 status_code=400,
             )
         dataset_id = body.get("dataset_id")
@@ -384,10 +394,15 @@ def create_app(handler=None) -> FastAPI:
             )
         domain = (body.get("domain") or dataset["name"] or "default").strip()
         overrides = body.get("overrides") if isinstance(body.get("overrides"), dict) else {}
-        # T8：推荐值（显存档/数据量）+ 用户覆盖 → 最终生效配置落 config_json
-        from tunefield.engine.recommender import recommend_for_dataset
+        # T8/T13：按 kind 取推荐值（显存档/数据量）+ 用户覆盖 → 生效配置
+        if kind == "pretrain":
+            from tunefield.engine.recommender import recommend_pretrain_for_dataset
 
-        rec = recommend_for_dataset(dataset, overrides)
+            rec = recommend_pretrain_for_dataset(dataset, overrides)
+        else:
+            from tunefield.engine.recommender import recommend_for_dataset
+
+            rec = recommend_for_dataset(dataset, overrides)
         cfg = {k: v for k, v in rec.items() if k != "_meta"}
 
         job_id = _new_id()
@@ -396,7 +411,7 @@ def create_app(handler=None) -> FastAPI:
             dataset_id=dataset_id,
             domain=domain,
             kind=kind,
-            base_model=cfg.get("base_model"),
+            base_model=cfg.get("base_model"),  # pretrain 无基座 → None
             config_json=_json.dumps(cfg, ensure_ascii=False),
             status="queued",
             created_at=_now_iso(),
