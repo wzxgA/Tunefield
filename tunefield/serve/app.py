@@ -310,6 +310,15 @@ def create_app(handler=None) -> FastAPI:
 
         return ollama.status()
 
+    @app.get("/api/system/status", tags=["system"])
+    async def system_status():
+        """W1：工作站壳状态 pill / 侧监控数据源（GPU 显存 + Ollama 一次返回）。"""
+        from tunefield.engine.recommender import detect_vram_gb
+        from tunefield.serve import ollama
+
+        vram = await run_in_threadpool(detect_vram_gb)
+        return {"gpu": {"vram_gb": vram}, "ollama": ollama.status()}
+
     @app.get("/api/chat/models", tags=["chat"])
     async def chat_models():
         """已导入 Ollama 的平台模型（tunefield- 前缀）。"""
