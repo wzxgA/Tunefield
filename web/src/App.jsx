@@ -3,6 +3,7 @@ import { api } from "./api.js";
 import { useEvents } from "./hooks/useEvents.js";
 import ChatScreen from "./screens/ChatScreen.jsx";
 import ModelsScreen from "./screens/ModelsScreen.jsx";
+import ProjectsScreen from "./screens/ProjectsScreen.jsx";
 import TrainScreen from "./screens/TrainScreen.jsx";
 import UploadScreen from "./screens/UploadScreen.jsx";
 
@@ -93,11 +94,16 @@ const clockNow = () => new Date().toTimeString().slice(0, 8);
 
 export default function App() {
   const [screen, setScreen] = useState("data"); // 默认 = 数据（无总览）
+  const [flowProject, setFlowProject] = useState(null); // W3：进入整屏编排的项目（数据集）
   const [sys, setSys] = useState(null);
   const [jobs, setJobs] = useState([]);
   const [modelCount, setModelCount] = useState(0);
   const [activity, setActivity] = useState([]);
   const [clock, setClock] = useState(clockNow());
+
+  // 编排流转：项目选择页点卡片 → flow-full 整屏模式（W4 挂画布）；返回回选择页
+  const enterFlow = (dataset) => setFlowProject(dataset);
+  const exitFlow = () => setFlowProject(null);
 
   const loadSys = useCallback(() => {
     api.get("/api/system/status").then(setSys).catch(() => {});
@@ -144,7 +150,7 @@ export default function App() {
   const ollamaOk = Boolean(sys?.ollama?.running);
 
   return (
-    <div className="ws">
+    <div className={`ws${flowProject ? " flow-full" : ""}`}>
       <header className="ws-top">
         <div className="brand">
           <svg className="brand-mark" viewBox="0 0 24 24" aria-hidden="true">
@@ -154,7 +160,11 @@ export default function App() {
           </svg>
           <span className="brand-name">TUNEFIELD</span>
         </div>
-        <span className="crumb">{CRUMBS[screen]}</span>
+        <span className="crumb">
+          {flowProject
+            ? `编排画布 / ${flowProject.name}`
+            : CRUMBS[screen]}
+        </span>
         <span className="top-spacer" />
         <span className="pill">
           <span className={`dot${gpu ? " ok" : ""}`} />
@@ -190,20 +200,36 @@ export default function App() {
         <span className="rail-foot">TUNEFIELD</span>
       </nav>
 
-      <main className="ws-main" key={screen}>
-        <div className="fade-in">
-          {screen === "data" && <UploadScreen />}
-          {screen === "train" && <TrainScreen />}
-          {screen === "chat" && <ChatScreen />}
-          {screen === "projects" && (
-            <div className="placeholder-card">
-              编排项目选择页 · W3 交付：真实数据集卡片 → 进入整屏编排画布
-              <br />
-              （交互原型预览：yuanxing/index-3.html）
+      <main className="ws-main" key={flowProject ? "flow" : screen}>
+        {flowProject ? (
+          <div className="fade-in flow-area">
+            <div className="flow-toolbar">
+              <button type="button" className="ws-btn" onClick={exitFlow}>
+                ← 返回项目
+              </button>
+              <span className="flow-title">{flowProject.name}</span>
+              <span className="top-spacer" />
+              <span className="pill">
+                <span className="dot" />
+                Flow 画布 · 随画布任务交付
+              </span>
             </div>
-          )}
-          {screen === "models" && <ModelsScreen />}
-        </div>
+            <div className="placeholder-card flow-stage">
+              整屏编排画布 · 下一任务交付：节点拖拽 / 端口连线 / 缩放适应 /
+              自动布局，运行状态由事件流驱动点亮
+            </div>
+          </div>
+        ) : (
+          <div className="fade-in">
+            {screen === "data" && <UploadScreen />}
+            {screen === "train" && <TrainScreen />}
+            {screen === "chat" && <ChatScreen />}
+            {screen === "projects" && (
+              <ProjectsScreen onEnter={enterFlow} onNew={() => setScreen("data")} />
+            )}
+            {screen === "models" && <ModelsScreen />}
+          </div>
+        )}
       </main>
 
       <aside className="side">

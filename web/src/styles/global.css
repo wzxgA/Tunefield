@@ -1860,6 +1860,131 @@ body::before {
   background: var(--accent-soft);
 }
 
+/* ---- W3 编排项目选择页 ---- */
+.proj-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+  margin-top: var(--gap-md);
+}
+
+.pcard {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 16px;
+  text-align: left;
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius-card);
+  background: rgba(255, 255, 255, 0.04);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  transition: all var(--dur) var(--ease);
+}
+
+.pcard:hover {
+  transform: translateY(-2px);
+  border-color: rgba(255, 255, 255, 0.34);
+  background: rgba(255, 255, 255, 0.07);
+  box-shadow: 0 22px 50px -26px rgba(0, 0, 0, 0.95);
+}
+
+.pcard .pi-ic {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.pcard .pi-ic svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: #dfe5ec;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.pcard b {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.pcard small {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.pcard .pi-meta {
+  margin-top: auto;
+  padding-top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pcard .pi-go {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.pcard.new {
+  justify-content: center;
+  align-items: center;
+  color: var(--text-muted);
+  border-style: dashed;
+  min-height: 130px;
+}
+
+@media (max-width: 1100px) {
+  .proj-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ---- W3 整屏编排占位区（W4 换 FlowCanvas） ---- */
+.flow-area {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  gap: var(--gap-sm);
+}
+
+.flow-toolbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--gap-md);
+  padding: 8px 14px;
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius-card);
+  background: rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(12px);
+}
+
+.flow-title {
+  font-size: 13px;
+  letter-spacing: 0.08em;
+}
+
+.flow-stage {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  margin-top: 0;
+  border-style: dashed;
+  background-image: radial-gradient(rgba(255, 255, 255, 0.06) 1px, transparent 1px);
+  background-size: 26px 26px;
+  text-align: center;
+}
+
 .activity {
   list-style: none;
   margin: 0;
