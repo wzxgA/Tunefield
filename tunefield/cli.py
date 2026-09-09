@@ -19,17 +19,6 @@ import uvicorn
 
 from tunefield import __version__
 
-# 各空命令的交付位置，用于提示与排期对照
-_PLANNED = {
-    "ingest": "T1（通用接入：解析 + 哈希去重 + raw 落盘）",
-    "build": "T2–T6（管线五步：解析/清洗/切片/指令化/质检）",
-    "train": "T7 微调（引擎A）/ T13 从零预训练（引擎B）",
-    "export": "T9（量化导出：合并 → GGUF → 指纹入库）",
-    "chat": "T10（对话验证：Modelfile 生成 + Ollama 导入 + REPL）",
-    "run": "T11（端到端一键串联 + 自动降级链）",
-    "serve": "F1（FastAPI 骨架 + 内嵌队列 + 前端托管）",
-}
-
 
 def _ingest(args: argparse.Namespace) -> int:
     """T1：通用接入（目录/文件/zip）→ 哈希去重 → raw 落盘并登记 dataset。"""
@@ -106,8 +95,9 @@ def _train(args: argparse.Namespace) -> int:
     from tunefield.pipeline.build import lookup_dataset
 
     if not args.dry_run:
-        print("[train] 真实训练请通过 Web 平台创建任务：uv run tunefield serve")
-        print("[train] CLI 当前支持 --dry-run 预览推荐配置（真实训练通道随 T11 交付）")
+        print("[train] 真实训练请通过 Web 平台（uv run tunefield serve）或一键 run：")
+        print("[train]   uv run tunefield run <path> --name <领域> [--epochs N]")
+        print("[train] CLI 当前支持 --dry-run 预览推荐配置")
         return 1
     try:
         dataset = lookup_dataset(args.dataset)
@@ -117,6 +107,204 @@ def _train(args: argparse.Namespace) -> int:
         return 1
     for line in dry_run_lines(rec):
         print(line)
+    return 0
+
+
+def _resolve_job(ref: str):
+    """解析导出目标：job id 或 adapter id（adapter.job_id 指向训练任务）。"""
+    from tunefield.serve import db
+
+    job = db.get_job(ref)
+    if job is not None:
+        return job
+    adapter = db.get_adapter(ref)
+    if adapter is not None and adapter.get("job_id"):
+        return db.get_job(adapter["job_id"])
+    return None
+
+
+def _export(args: argparse.Namespace) -> int:
+    """T9 CLI：训练产物 → LoRA 合并 → GGUF → 量化（--quant 逗号分隔档位）。"""
+    from tunefield.engine.base import EngineError
+    from tunefield.engine.exporter import Exporter
+
+    job = _resolve_job(args.artifact)
+    if job is None:
+        print(f"[export] 找不到任务或适配器：{args.artifact}")
+        return 1
+    quants = tuple(q for q in (args.quant or "q4_k_m,q8").split(",") if q)
+    try:
+        result = Exporter().run_export(job, quants=quants)
+    except EngineError as exc:
+        print(f"[export] 失败：{exc}")
+        return 1
+    for m in result["models"]:
+        print(f"[export] {m['quant']}：{m['path']}")
+    print(f"[export] 指纹：{result['fingerprint'].get('created_at')} · 共 {len(result['models'])} 个产物")
+    return 0
+
+
+def _chat(args: argparse.Namespace) -> int:
+    """T10 CLI：GGUF 导入 Ollama + REPL。model 可为平台模型/job id/ollama 名/本地文件。"""
+    from pathlib import Path
+
+    from tunefield.assets import registry as asset_registry
+    from tunefield.engine.base import EngineError
+    from tunefield.serve import ollama
+
+    ref = args.model
+    models = asset_registry.list_gguf_models()
+    pick = next(
+        (
+            x for x in models
+            if ref in (x["ollama_name"], x["id"], x["path"], Path(x["path"]).name)
+        ),
+        None,
+    )
+    if pick is None:
+        p = Path(ref)
+        if p.exists():
+            name = f"tunefield-{asset_registry.slugify(p.stem)}"
+            pick = {"path": str(p.resolve()), "ollama_name": name}
+        else:
+            print(f"[chat] 无法识别模型「{ref}」：不是平台 GGUF、ollama 名或存在的文件")
+            return 1
+    name = pick["ollama_name"]
+    try:
+        ollama.import_model(pick)
+    except EngineError as exc:
+        print(f"[chat] 导入失败：{exc}")
+        return 1
+    print(f"[chat] 已就绪：{name}（Ctrl+C / Ctrl+Z 退出）")
+    history: list[dict] = []
+    while True:
+        try:
+            q = input("你> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("[chat] 再见")
+            return 0
+        if not q:
+            continue
+        history.append({"role": "user", "content": q})
+        try:
+            r = ollama.chat_completions({"model": name, "messages": history})
+            answer = r["choices"][0]["message"]["content"]
+        except EngineError as exc:
+            print(f"[chat] 请求失败：{exc}")
+            continue
+        history.append({"role": "assistant", "content": answer})
+        print(f"\n模型> {answer}\n")
+
+
+def _now_iso() -> str:
+    import time
+
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def _run(args: argparse.Namespace) -> int:
+    """T11 CLI：一键 ingest → build → train → export → 导入 Ollama。
+
+    与 Web /api/runs 共享同一步骤与代码路径（build/推荐器/引擎A/Exporter/
+    ollama），训练阶段含 CUDA OOM 自动降级链。
+    """
+    import json as _json
+    import secrets as _secrets
+    import time as _time
+
+    from tunefield.engine import registry
+    from tunefield.engine.exporter import Exporter
+    from tunefield.pipeline.build import lookup_dataset, run_build
+    from tunefield.pipeline.ingest import ingest_path
+    from tunefield.serve import db
+
+    started = _time.time()
+
+    def step(n: int, label: str) -> None:
+        print(f"[run] {n}/5 {label} …")
+
+    # 1. 接入
+    step(1, "接入数据")
+    try:
+        ds = ingest_path(args.path, name=args.name)
+    except (FileNotFoundError, ValueError) as exc:
+        print(f"[run] 失败：{exc}")
+        return 1
+    dataset = lookup_dataset(ds["id"])
+    print(f"[run] dataset {dataset['id']} · 指纹 {dataset['content_hash'][:10]}…")
+
+    # 2. 构建（解析→清洗→切片→指令化→质检）
+    step(2, "构建数据（解析/清洗/切片/指令化/质检）")
+    try:
+        res = run_build(
+            dataset, chunk_size=args.chunk, overlap=args.overlap, template=args.template
+        )
+    except (ValueError, FileNotFoundError) as exc:
+        print(f"[run] 失败：{exc}")
+        return 1
+    summary = (res.get("report") or {}).get("summary") or {}
+    print(f"[run] 样本 {summary.get('sample_count')} · 语料 {summary.get('corpus_mb')}MB")
+    dataset = res["dataset"]
+
+    # 3. 训练（引擎 A，真实子进程；OOM 自动降级）
+    from tunefield.engine import llmfactory  # noqa: F401  # 注册引擎 A
+    from tunefield.engine.recommender import recommend_for_dataset
+
+    step(3, "微调训练（引擎A · CUDA OOM 自动降级）")
+    rec = recommend_for_dataset(dataset, {"epochs": args.epochs} if args.epochs else None)
+    cfg = {k: v for k, v in rec.items() if k != "_meta"}
+    job_id = _secrets.token_hex(8)
+    db.insert_job(
+        job_id=job_id, dataset_id=dataset["id"], domain=dataset["name"],
+        kind="finetune", base_model=cfg.get("base_model"),
+        config_json=_json.dumps(cfg, ensure_ascii=False),
+        status="running", created_at=_now_iso(),
+    )
+    try:
+        result = registry.get_engine("finetune").run(db.get_job(job_id), dataset, cfg)
+        db.set_job_status(job_id, "done", progress=1.0)
+    except Exception as exc:  # noqa: BLE001 - CLI 给出可读失败信息
+        db.set_job_status(job_id, "failed", error=str(exc))
+        print(f"[run] 训练失败：{exc}")
+        return 1
+    degrades = result.get("degrade") or []
+    print(f"[run] 训练完成 job {job_id} · 轮次 {result.get('epochs')}"
+          + (f" · OOM 自动降级 {len(degrades)} 次" if degrades else ""))
+
+    # 4. 导出
+    step(4, "量化导出（LoRA 合并 → GGUF → 量化）")
+    quants = tuple(q for q in (args.quant or "q4_k_m,q8").split(",") if q)
+    try:
+        exp_result = Exporter().run_export(db.get_job(job_id), quants=quants)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[run] 导出失败：{exc}")
+        return 1
+    models = exp_result.get("models") or []
+    print(f"[run] 产物 {len(models)} 个")
+
+    # 5. 导入 Ollama（可选；未装/未运行则跳过不失败）
+    if not args.no_import:
+        from tunefield.assets import registry as asset_registry
+        from tunefield.serve import ollama
+
+        step(5, "导入 Ollama")
+        owned = [m for m in asset_registry.list_gguf_models() if m.get("job_id") == job_id]
+        pick = next((m for m in owned if m["quant"] == "q4_k_m"), None)
+        pick = pick or next((m for m in owned if m["quant"] == "q8"), None)
+        pick = pick or next((m for m in owned if m["quant"] == "f16"), None)
+        if pick is None:
+            print("[run] 无可用 GGUF 产物，跳过导入")
+        else:
+            try:
+                r = ollama.import_model(pick)
+                print(f"[run] 已导入 {r.get('ollama_name')}"
+                      f" —— 可用 tunefield chat {r.get('ollama_name')} 对话")
+            except Exception as exc:  # noqa: BLE001 - Ollama 边界只阻塞对话
+                print(f"[run] 导入跳过（Ollama 不可用）：{exc}")
+    else:
+        print("[run] 5/5 跳过导入 Ollama（--no-import）")
+
+    print(f"[run] 端到端完成 · 总耗时 {_time.time() - started:.1f}s")
     return 0
 
 
@@ -155,16 +343,6 @@ def _base_smoke(args: argparse.Namespace) -> int:
     print(f"[base] 输入：{result['prompt']}")
     print(f"[base] 输出：{result['output']}")
     return 0
-
-
-def _make_stub(command: str):
-    """生成一个空命令处理函数：打印交付排期并返回非零退出码。"""
-
-    def _run(args: argparse.Namespace) -> int:
-        print(f"[{command}] 尚未实现，将由 {_PLANNED[command]} 交付。")
-        return 1
-
-    return _run
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -206,19 +384,30 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.set_defaults(func=_train)
 
-    p = sub.add_parser("export", help="导出量化模型（LoRA 合并或预训练全量 → GGUF）")
+    p = sub.add_parser("export", help="导出量化模型（LoRA 合并 → GGUF → 量化）")
     p.add_argument("artifact", help="adapter id 或 job id")
     p.add_argument("--quant", default="q4_k_m,q8", help="量化档位（逗号分隔），默认 q4_k_m,q8")
-    p.set_defaults(func=_make_stub("export"))
+    p.set_defaults(func=_export)
 
-    p = sub.add_parser("chat", help="与量化模型对话（Ollama 临时导入 + REPL）")
-    p.add_argument("model", help="GGUF 模型名或文件路径")
-    p.set_defaults(func=_make_stub("chat"))
+    p = sub.add_parser("chat", help="与量化模型对话（GGUF 导入 Ollama + REPL）")
+    p.add_argument("model", help="GGUF 模型（平台模型 id / ollama 名 / 本地 .gguf 路径）")
+    p.set_defaults(func=_chat)
 
-    p = sub.add_parser("run", help="一键串联 ingest → build → train → export → chat")
+    p = sub.add_parser(
+        "run", help="一键端到端：ingest → build → train → export → 导入 Ollama"
+    )
     p.add_argument("path", help="数据目录或文件路径")
     p.add_argument("--name", required=True, help="领域名称")
-    p.set_defaults(func=_make_stub("run"))
+    p.add_argument("--epochs", type=int, default=None,
+                   help="训练轮次（默认按数据量推荐）")
+    p.add_argument("--chunk", type=int, default=768, help="目标块长（token），默认 768")
+    p.add_argument("--overlap", type=int, default=96, help="相邻块重叠（token），默认 96")
+    p.add_argument("--template", default="continuation",
+                   help="指令模板 key（continuation | qa），默认 continuation")
+    p.add_argument("--quant", default="q4_k_m,q8", help="量化档位，默认 q4_k_m,q8")
+    p.add_argument("--no-import", action="store_true",
+                   help="训练导出后不自动导入 Ollama")
+    p.set_defaults(func=_run)
 
     p = sub.add_parser("serve", help="启动 Web 平台（单命令直启）")
     p.add_argument("--host", default="127.0.0.1", help="监听地址，默认 127.0.0.1")

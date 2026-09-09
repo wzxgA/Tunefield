@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from contextlib import contextmanager
 from typing import Any, Iterator, Sequence
@@ -85,6 +86,19 @@ CREATE TABLE IF NOT EXISTS quantized_models (
   path        TEXT NOT NULL,
   size_bytes  INTEGER,
   created_at  TEXT
+);
+
+CREATE TABLE IF NOT EXISTS pipeline_runs (
+  id            TEXT PRIMARY KEY,     -- T11 端到端编排（一键 run）
+  dataset_id    TEXT REFERENCES datasets(id),
+  domain        TEXT NOT NULL,
+  job_id        TEXT,                 -- 训练子任务（run 内创建的真实 training job）
+  config_json   TEXT,                 -- epochs/chunk/template 等请求参数
+  status        TEXT,                 -- queued|running|done|failed|pending_gpu
+  progress      REAL DEFAULT 0,       -- 0.0~1.0
+  timeline_json TEXT,                 -- 阶段时间线 [{key,label,status,detail,started_at,finished_at,duration_s}]
+  error         TEXT,
+  created_at    TEXT, started_at TEXT, finished_at TEXT
 );
 """
 
@@ -280,3 +294,133 @@ def list_quantized_models() -> list[dict[str, Any]]:
             "SELECT * FROM quantized_models ORDER BY created_at"
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# 端到端运行访问层（T11：pipeline_runs 一键 run + 阶段时间线）
+# ---------------------------------------------------------------------------
+
+
+def insert_pipeline_run(
+    *, id: str, dataset_id: str, domain: str, job_id: str | None,
+    config_json: str | None, status: str, created_at: str,
+) -> dict[str, Any]:
+    with transaction() as conn:
+        conn.execute(
+            "INSERT INTO pipeline_runs (id, dataset_id, domain, job_id, config_json, "
+            "status, progress, created_at) VALUES (?,?,?,?,?,?,0,?)",
+            (id, dataset_id, domain, job_id, config_json, status, created_at),
+        )
+        row = conn.execute("SELECT * FROM pipeline_runs WHERE id = ?", (id,)).fetchone()
+    return dict(row) if row else {}
+
+
+def get_pipeline_run(run_id: str) -> dict[str, Any] | None:
+    with transaction() as conn:
+        row = conn.execute(
+            "SELECT * FROM pipeline_runs WHERE id = ?", (run_id,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def list_pipeline_runs() -> list[dict[str, Any]]:
+    with transaction() as conn:
+        rows = conn.execute(
+            "SELECT * FROM pipeline_runs ORDER BY created_at"
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def pipeline_runs_by_status(statuses: Sequence[str]) -> list[dict[str, Any]]:
+    placeholders = ",".join("?" for _ in statuses)
+    with transaction() as conn:
+        rows = conn.execute(
+            f"SELECT * FROM pipeline_runs WHERE status IN ({placeholders}) "
+            "ORDER BY created_at",
+            list(statuses),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def set_pipeline_run(
+    run_id: str, *, status: str | None = None, progress: float | None = None,
+    error: str | None = None, job_id: str | None = None,
+) -> None:
+    """更新 pipeline_run 字段（status/progress/error/job_id）。"""
+    fields: list[str] = []
+    values: list[Any] = []
+    if status is not None:
+        fields.append("status = ?")
+        values.append(status)
+        if status in ("running",):
+            fields.append("started_at = COALESCE(started_at, "
+                          "strftime('%Y-%m-%dT%H:%M:%SZ','now'))")
+        if status in ("done", "failed"):
+            fields.append("finished_at = COALESCE(finished_at, "
+                          "strftime('%Y-%m-%dT%H:%M:%SZ','now'))")
+    if progress is not None:
+        fields.append("progress = ?")
+        values.append(progress)
+    if error is not None:
+        fields.append("error = ?")
+        values.append(error)
+    if job_id is not None:
+        fields.append("job_id = ?")
+        values.append(job_id)
+    if not fields:
+        return
+    values.append(run_id)
+    with transaction() as conn:
+        conn.execute(
+            f"UPDATE pipeline_runs SET {', '.join(fields)} WHERE id = ?", values
+        )
+
+
+def _timeline_of(conn: sqlite3.Connection, run_id: str) -> list[dict]:
+    row = conn.execute(
+        "SELECT timeline_json FROM pipeline_runs WHERE id = ?", (run_id,)
+    ).fetchone()
+    raw = row["timeline_json"] if row and row["timeline_json"] else None
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+        return parsed if isinstance(parsed, list) else []
+    except (ValueError, TypeError):
+        return []
+
+
+def append_pipeline_phase(run_id: str, phase: dict) -> None:
+    """时间线末尾追加一个阶段条目。"""
+    with transaction() as conn:
+        phases = _timeline_of(conn, run_id)
+        phases.append(phase)
+        conn.execute(
+            "UPDATE pipeline_runs SET timeline_json = ? WHERE id = ?",
+            (json.dumps(phases, ensure_ascii=False), run_id),
+        )
+
+
+def update_pipeline_phase(
+    run_id: str, key: str, *, status: str | None = None,
+    finished_at: str | None = None, duration_s: float | None = None,
+    detail: str | None = None,
+) -> None:
+    """按 key 就地更新时间线阶段（补完成状态/耗时/说明）。"""
+    with transaction() as conn:
+        phases = _timeline_of(conn, run_id)
+        target = next((p for p in phases if p.get("key") == key), None)
+        if target is None:
+            return
+        if status is not None:
+            target["status"] = status
+        if finished_at is not None:
+            target["finished_at"] = finished_at
+        if duration_s is not None:
+            target["duration_s"] = round(duration_s, 1)
+        if detail is not None:
+            target["detail"] = detail
+        conn.execute(
+            "UPDATE pipeline_runs SET timeline_json = ? WHERE id = ?",
+            (json.dumps(phases, ensure_ascii=False), run_id),
+        )

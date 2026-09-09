@@ -234,6 +234,14 @@ class BaseEngine:
         """生成训练子进程命令（可写工作目录配置）；必须由子类实现。"""
         raise NotImplementedError
 
+    def degrade_cfg(self, cfg: dict) -> tuple[dict, str] | None:
+        """OOM 失败时的自动降级方案；默认不支持（返回 None，交由上层报错）。
+
+        T11：run() 失败分支检测到 CUDA OOM 时逐级调用本方法，直到返回 None
+        （降级链耗尽，报错）或子进程成功。子类返回 (降级后 cfg, 人类可读说明)。
+        """
+        return None
+
     # ------------------------------------------------------------------
     def run(self, job: dict, dataset: dict, cfg: dict, *, loop=None, cmd: list[str] | None = None) -> dict:
         """执行训练并推进进度/loss/日志。
@@ -279,6 +287,7 @@ class BaseEngine:
             _publish(loop, "job.log", {"id": job_id, "line": msg})
 
         attempt = 1
+        degrades: list[str] = []  # T11：记录本轮自动降级说明（供返回与前端展示）
         while True:
             resume = _latest_checkpoint(workdir)
             argv = list(cmd) if cmd is not None else self.prepare(
@@ -327,9 +336,22 @@ class BaseEngine:
 
             if rc == 0:
                 return {"job_id": job_id, "workdir": str(workdir),
-                        "epochs": epochs, "retried": attempt > 1}
+                        "epochs": epochs, "retried": attempt > 1,
+                        "degrade": degrades}
 
             tail = "\n".join(log_tail(job_id, 25))
+            oom = bool(_OOM_RE.search(tail))
+            if oom:
+                # T11：CUDA OOM 触发自动降级链（缩序列→降位宽→降基座），
+                # 每级一次尝试；链底仍失败才报错。普通失败不在此处理。
+                step = self.degrade_cfg(cfg)
+                if step is not None:
+                    cfg, desc = step
+                    degrades.append(desc)
+                    fire_stage(f"[engine] CUDA OOM → 自动降级：{desc}（重试第 {len(degrades)} 级）…")
+                    continue
+                raise EngineError(
+                    f"训练进程 CUDA OOM 且已无可用降级档位。最近日志：\n{tail}")
             if attempt == 1:
                 fire_stage("[engine] 进程异常退出，自动重试一次（断点续训）…")
                 attempt = 2

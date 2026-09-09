@@ -114,5 +114,11 @@ class LlmFactoryEngine(base.BaseEngine):
             argv += ["--resume_from_checkpoint", resume]
         return argv
 
+    def degrade_cfg(self, cfg: dict) -> tuple[dict, str] | None:
+        """T11：OOM 降级策略（缩序列 → 降位宽 → 降基座），见 engine/degrade。"""
+        from tunefield.engine import degrade
+
+        return degrade.next_degrade(cfg)
+
 
 registry.register(LlmFactoryEngine())

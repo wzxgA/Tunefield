@@ -27,13 +27,29 @@ _RECOVERABLE = ("queued", "pending_gpu")
 _INTERRUPTED = ("running", "exporting", "parsing", "training")
 
 
+def _is_run(ref: str) -> bool:
+    """按 id 判定对象是 T11 端到端 run（pipeline_runs）还是训练 job。"""
+    return db.get_pipeline_run(ref) is not None
+
+
 def set_status(
-    job_id: str, status: str, *, progress: float | None = None, error: str | None = None
+    ref: str, status: str, *, progress: float | None = None, error: str | None = None
 ) -> None:
-    """状态落库 + 广播 job.status 事件（队列与 handler 统一走这里推进状态）。"""
-    db.set_job_status(job_id, status, progress=progress, error=error)
+    """状态落库 + 广播事件（队列与 handler 统一走这里推进状态）。
+
+    T11：job 与端到端 run 两类对象共用队列。训练 job 广播 job.status，
+    pipeline run 广播 run.status（前端据此驱动阶段时间线刷新）。
+    """
+    if _is_run(ref):
+        db.set_pipeline_run(ref, status=status, progress=progress, error=error)
+        events.hub.publish(
+            "run.status",
+            {"id": ref, "status": status, "progress": progress, "error": error},
+        )
+        return
+    db.set_job_status(ref, status, progress=progress, error=error)
     events.hub.publish(
-        "job.status", {"id": job_id, "status": status, "progress": progress, "error": error}
+        "job.status", {"id": ref, "status": status, "progress": progress, "error": error}
     )
 
 
@@ -72,13 +88,19 @@ class JobQueue:
     # 内部
     # ------------------------------------------------------------------
     async def _recover(self) -> None:
-        """进程重启恢复：重入队调度态任务，标记中断执行态。"""
-        for job in db.jobs_by_status(_RECOVERABLE):
-            self.queue.put_nowait(job["id"])
-            logger.info("重新入队任务 %s（状态 %s）", job["id"], job["status"])
-        for job in db.jobs_by_status(_INTERRUPTED):
-            set_status(job["id"], "failed", error="进程重启导致任务中断，等待手动重跑")
-            logger.warning("任务 %s 标记为 failed（进程重启中断）", job["id"])
+        """进程重启恢复：重入队调度态任务，标记中断执行态（job 与 run 两类）。"""
+        for row in db.jobs_by_status(_RECOVERABLE):
+            self.queue.put_nowait(row["id"])
+            logger.info("重新入队任务 %s（状态 %s）", row["id"], row["status"])
+        for row in db.pipeline_runs_by_status(_RECOVERABLE):
+            self.queue.put_nowait(row["id"])
+            logger.info("重新入队端到端 run %s（状态 %s）", row["id"], row["status"])
+        for row in db.jobs_by_status(_INTERRUPTED):
+            set_status(row["id"], "failed", error="进程重启导致任务中断，等待手动重跑")
+            logger.warning("任务 %s 标记为 failed（进程重启中断）", row["id"])
+        for row in db.pipeline_runs_by_status(_INTERRUPTED):
+            set_status(row["id"], "failed", error="进程重启导致端到端运行中断，等待手动重跑")
+            logger.warning("端到端 run %s 标记为 failed（进程重启中断）", row["id"])
 
     async def _consume(self) -> None:
         while True:

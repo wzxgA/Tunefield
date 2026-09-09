@@ -469,6 +469,159 @@ body {
   font-size: 12px;
 }
 
+.form-error.inline {
+  margin: 0;
+  align-self: center;
+}
+
+/* ===== T11 一键端到端 + 阶段时间线 ===== */
+
+.run-panel {
+  margin-top: var(--gap-sm);
+  padding: var(--gap-sm) var(--gap-md) var(--gap-md);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--card);
+}
+
+.run-form {
+  display: flex;
+  gap: var(--gap-sm);
+}
+
+.run-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-xs);
+  max-height: 216px;
+  overflow-y: auto;
+  margin-top: var(--gap-sm);
+  padding-right: 2px;
+}
+
+.run-item {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+}
+
+.run-item.run-open {
+  border-color: var(--accent);
+}
+
+.run-head {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: var(--gap-sm);
+  padding: 6px 10px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.run-head:hover {
+  background: var(--card-muted);
+}
+
+.run-ds {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.run-phases {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.run-phase {
+  flex: none;
+  padding: 0 6px;
+  border-radius: 8px;
+  font-size: 11px;
+  line-height: 18px;
+}
+
+.st-p-ok {
+  background: #e9f0e6;
+  color: var(--ok);
+}
+
+.st-p-failed {
+  background: #f3e3dd;
+  color: var(--err);
+}
+
+.st-p-skipped {
+  background: var(--card-muted);
+  color: var(--text-muted);
+}
+
+.st-p-running {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.st-p-pending {
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px dashed var(--border-strong);
+}
+
+.run-detail {
+  padding: 4px 10px 10px;
+  border-top: 1px dashed var(--border-strong);
+}
+
+.tl-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: var(--gap-md);
+  row-gap: 2px;
+  padding: 4px 2px;
+  font-size: 12px;
+}
+
+.tl-stage {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tl-status {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.tl-time {
+  flex: none;
+  font-family: Consolas, monospace;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.tl-detail {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: #4a443a;
+}
+
+.run-log {
+  margin-top: 6px;
+  max-height: 140px;
+}
+
 .train-layout {
   flex: 1;
   min-height: 0;

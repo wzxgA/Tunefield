@@ -45,9 +45,10 @@ def create_app(handler=None) -> FastAPI:
     db.init_db()
 
     if handler is None:
-        from tunefield.engine.dispatch import create_train_handler
+        # T11：默认 handler 支持训练 job 与端到端 run 两类对象
+        from tunefield.engine.dispatch import create_combined_handler
 
-        handler = create_train_handler()
+        handler = create_combined_handler()
     queue: JobQueue = JobQueue(handler=handler)
 
     @asynccontextmanager
@@ -164,6 +165,76 @@ def create_app(handler=None) -> FastAPI:
             return {"dataset": existed, "deduped": True}
         ds = ingest_files(contents, name=name.strip(), source="upload")
         return {"dataset": ds, "deduped": False}
+
+    # ---------------- T11 端到端 run（一键 run + 阶段时间线） ----------------
+
+    def _parse_timeline(raw) -> list:
+        import json as _json
+
+        if not raw:
+            return []
+        try:
+            tl = _json.loads(raw) if isinstance(raw, str) else raw
+            return tl if isinstance(tl, list) else []
+        except (ValueError, TypeError):
+            return []
+
+    @app.get("/api/runs", tags=["runs"])
+    async def list_runs():
+        runs = db.list_pipeline_runs()
+        for r in runs:
+            r["timeline"] = _parse_timeline(r.pop("timeline_json", None))
+        return runs
+
+    @app.post("/api/runs", tags=["runs"])
+    async def create_run(body: dict):
+        """T11：一键端到端——数据管线 → 微调 → 导出 → 导入 Ollama。
+
+        body: {dataset_id, epochs?, chunk_size?, overlap?, template?, auto_import?}
+        """
+        import json as _json
+
+        dataset_id = body.get("dataset_id")
+        dataset = db.get_dataset(dataset_id) if dataset_id else None
+        if dataset is None:
+            return JSONResponse(
+                {"detail": "缺少 dataset_id 或数据集不存在：请先上传数据"}, status_code=400
+            )
+        cfg = {
+            "epochs": body.get("epochs"),
+            "chunk_size": int(body.get("chunk_size", 768)),
+            "overlap": int(body.get("overlap", 96)),
+            "template": str(body.get("template", "continuation")),
+            "auto_import": bool(body.get("auto_import", True)),
+        }
+        run_id = _new_id()
+        db.insert_pipeline_run(
+            id=run_id,
+            dataset_id=dataset["id"],
+            domain=dataset["name"],
+            job_id=None,
+            config_json=_json.dumps(cfg, ensure_ascii=False),
+            status="queued",
+            created_at=_now_iso(),
+        )
+        events.hub.publish(
+            "run.created",
+            {"id": run_id, "domain": dataset["name"], "dataset_id": dataset["id"],
+             "dataset_name": dataset["name"], "status": "queued"},
+        )
+        queue.enqueue(run_id)
+        return db.get_pipeline_run(run_id)
+
+    @app.get("/api/runs/{run_id}", tags=["runs"])
+    async def get_run(run_id: str):
+        run = db.get_pipeline_run(run_id)
+        if run is None:
+            return JSONResponse({"detail": "run not found"}, status_code=404)
+        run["timeline"] = _parse_timeline(run.pop("timeline_json", None))
+        from tunefield.engine.base import log_tail
+
+        run["log"] = log_tail(run_id, 150)
+        return run
 
     # ---------------- 任务路由（T7 起接真实引擎编排） ----------------
     @app.get("/api/train/preview", tags=["jobs"])

@@ -5,6 +5,8 @@ import LossChart from "../components/LossChart";
 
 // T7：训练任务可选「已构建」数据集；任务运行中实时推送 loss 采样与日志行
 // （日志来自 engine 子进程逐行监控 → job.log 事件）
+// T11：顶部「一键端到端」——选任意已上传数据集，自动走
+// 构建→训练→导出→导入 Ollama，阶段时间线经 run.created/status/stage 事件驱动
 
 const STATUS_LABEL = {
   queued: "排队中",
@@ -12,6 +14,22 @@ const STATUS_LABEL = {
   running: "训练中",
   done: "已完成",
   failed: "失败",
+};
+const RUN_STATUS_LABEL = {
+  queued: "排队中",
+  pending_gpu: "等待 GPU",
+  running: "运行中",
+  done: "已跑通",
+  failed: "失败",
+};
+
+// 阶段展示顺序与文案（后端 key → 中文）
+const PHASE_LABEL = { build: "构建", train: "训练", export: "导出", import: "导入" };
+const STAGE_LABEL = {
+  ok: "完成",
+  failed: "失败",
+  skipped: "跳过",
+  running: "进行中",
 };
 
 // 后端 loss_json 形如 "[1,0.9],[2,0.7]"
@@ -24,9 +42,23 @@ function parseLoss(lossJson) {
   }
 }
 
+// 把 stage 事件/响应合并进 run.timeline（按 key 去重置换）
+function upsertPhase(timeline, phase) {
+  const rest = (timeline || []).filter((p) => p.key !== phase.key);
+  return [...rest, phase];
+}
+
+function fmtDuration(s) {
+  if (s === null || s === undefined) return "—";
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  return `${m}m${Math.round(s % 60)}s`;
+}
+
 export default function TrainScreen() {
   const [jobs, setJobs] = useState([]);
   const [datasets, setDatasets] = useState([]); // 已构建数据集（可训练）
+  const [allDatasets, setAllDatasets] = useState([]); // 所有数据集（可一键端到端）
   const [lossMap, setLossMap] = useState({});
   const [logs, setLogs] = useState({}); // {jobId: [line,...]}
   const [selectedId, setSelectedId] = useState(null);
@@ -38,6 +70,15 @@ export default function TrainScreen() {
   const [createError, setCreateError] = useState("");
   const [models, setModels] = useState([]); // T9 GGUF 清单
   const [exporting, setExporting] = useState(false);
+
+  // T11 端到端 run
+  const [runs, setRuns] = useState([]);
+  const [runDetailLog, setRunDetailLog] = useState({}); // {runId: [line,...]}
+  const [runSel, setRunSel] = useState(null);
+  const [runDatasetSel, setRunDatasetSel] = useState("");
+  const [runEpochs, setRunEpochs] = useState(3);
+  const [runCreating, setRunCreating] = useState(false);
+  const [runError, setRunError] = useState("");
   const logRef = useRef(null);
 
   // 初始：拉取任务列表 + 历史 loss + 已构建数据集（刷新后恢复现场）
@@ -56,9 +97,16 @@ export default function TrainScreen() {
     }
     try {
       const ds = await api.get("/api/datasets");
+      setAllDatasets(ds || []);
       const built = (ds || []).filter((d) => d.status === "built");
       setDatasets(built);
       if (built.length > 0) setDatasetSel((cur) => cur || built[0].id);
+      if (ds?.length > 0) setRunDatasetSel((cur) => cur || ds[ds.length - 1].id);
+    } catch {
+      /* ignore */
+    }
+    try {
+      setRuns(await api.get("/api/runs"));
     } catch {
       /* ignore */
     }
@@ -67,7 +115,7 @@ export default function TrainScreen() {
     load();
   }, [load]);
 
-  // T8：切换数据集 → 拉取推荐配置（显存档/基座/轮次/学习率…）
+  // T8：切换数据集 → 拉取推荐配置（显存档位/基座/轮次/学习率…）
   useEffect(() => {
     if (!datasetSel) {
       setRec(null);
@@ -127,7 +175,43 @@ export default function TrainScreen() {
     }
   };
 
-  // 事件订阅：job.created / job.status / job.loss 实时更新，无需轮询
+  // T11：一键端到端
+  const createRun = async () => {
+    const dataset = allDatasets.find((d) => d.id === runDatasetSel);
+    if (!dataset) {
+      setRunError("请先上传一个数据集");
+      return;
+    }
+    setRunCreating(true);
+    setRunError("");
+    try {
+      await api.post("/api/runs", {
+        dataset_id: dataset.id,
+        epochs: Number(runEpochs) || undefined,
+      });
+    } catch (e) {
+      setRunError(String(e.message || e));
+    } finally {
+      setRunCreating(false);
+    }
+  };
+
+  const openRun = useCallback((id) => {
+    setRunSel(id);
+    if (runDetailLog[id]) return; // 已有进程内日志，直接显示
+    api
+      .get(`/api/runs/${id}`)
+      .then((detail) => {
+        if (detail && Array.isArray(detail.log)) {
+          setRunDetailLog((m) => ({ ...m, [id]: detail.log }));
+        }
+      })
+      .catch(() => {});
+  }, [runDetailLog]);
+
+  const fmtTime = (iso) => (iso ? iso.slice(11, 19) : "…");
+
+  // 事件订阅：job.* 与 run.* 实时更新，无需轮询
   const onEvent = useCallback((msg) => {
     const { type, data } = msg;
     if (type === "job.created") {
@@ -161,6 +245,33 @@ export default function TrainScreen() {
         const lines = [...(m[data.id] || []), data.line].slice(-800);
         return { ...m, [data.id]: lines };
       });
+    } else if (type === "run.created") {
+      setRuns((rs) =>
+        rs.some((r) => r.id === data.id)
+          ? rs
+          : [{ ...data, progress: 0, timeline: [] }, ...rs]
+      );
+    } else if (type === "run.status") {
+      setRuns((rs) =>
+        rs.map((r) =>
+          r.id === data.id
+            ? {
+                ...r,
+                status: data.status,
+                progress: data.progress ?? r.progress,
+                error: data.error ?? r.error,
+              }
+            : r
+        )
+      );
+    } else if (type === "run.stage") {
+      // T11：阶段事件即推进时间线（含失败/跳过），无需轮询
+      const { id, ...phase } = data;
+      setRuns((rs) =>
+        rs.map((r) =>
+          r.id === id ? { ...r, timeline: upsertPhase(r.timeline, phase) } : r
+        )
+      );
     }
   }, []);
   const connected = useEvents(onEvent);
@@ -205,7 +316,7 @@ export default function TrainScreen() {
         <div>
           <h2 className="screen-title">训练任务</h2>
           <p className="screen-hint">
-            选择已构建数据集创建任务；状态 / loss 曲线 / 引擎日志经事件流实时推送（微调需 GPU 环境）。
+            选择已构建数据集创建任务；或对任意上传数据一键「端到端」自动完成构建 → 微调 → 导出 → 导入对话。
           </p>
         </div>
         <span
@@ -214,6 +325,96 @@ export default function TrainScreen() {
         />
       </div>
 
+      {/* ===== T11 一键端到端 + 阶段时间线 ===== */}
+      <div className="run-panel">
+        <div className="run-form">
+          <select
+            className="input"
+            value={runDatasetSel}
+            onChange={(e) => setRunDatasetSel(e.target.value)}
+            title="端到端数据：任意已上传数据集（未构建也会自动构建）"
+          >
+            {allDatasets.length === 0 && <option value="">（暂无数据集 · 请先到「数据」页上传）</option>}
+            {allDatasets.map((d) => (
+              <option key={d.id} value={d.id}>
+                {d.name}（{d.status === "built" ? "已构建" : "未构建"}）
+              </option>
+            ))}
+          </select>
+          <input
+            className="input epochs-input"
+            type="number"
+            min={1}
+            max={20}
+            value={runEpochs}
+            onChange={(e) => setRunEpochs(e.target.value)}
+            title="训练轮数（epochs）"
+          />
+          <button className="btn-primary" onClick={createRun} disabled={runCreating}>
+            {runCreating ? "创建中…" : "一键端到端"}
+          </button>
+          {runError && <span className="form-error inline">{runError}</span>}
+        </div>
+        <div className="run-list">
+          {runs.length === 0 && (
+            <div className="job-empty">还没有端到端运行 · 选数据集后点「一键端到端」</div>
+          )}
+          {runs.map((r) => {
+            const tl = r.timeline || [];
+            const expanded = r.id === runSel;
+            return (
+              <div key={r.id} className={`run-item${expanded ? " run-open" : ""}`}>
+                <button type="button" className="run-head" onClick={() => openRun(r.id)}>
+                  <span className="job-domain">{r.domain}</span>
+                  <span className={`badge st-${r.status}`}>
+                    {RUN_STATUS_LABEL[r.status] || r.status}
+                  </span>
+                  {r.dataset_name && <span className="run-ds">{r.dataset_name}</span>}
+                  {tl.length > 0 && (
+                    <span className="run-phases">
+                      {Object.keys(PHASE_LABEL).map((k) => {
+                        const p = tl.find((x) => x.key === k);
+                        return (
+                          <span
+                            key={k}
+                            className={`run-phase st-p-${p ? p.status : "pending"}`}
+                            title={p ? `${PHASE_LABEL[k]}：${STAGE_LABEL[p.status] || p.status}` : `${PHASE_LABEL[k]}：等待`}
+                          >
+                            {PHASE_LABEL[k]}
+                          </span>
+                        );
+                      })}
+                    </span>
+                  )}
+                </button>
+                {expanded && (
+                  <div className="run-detail">
+                    {r.error && <p className="pf-error">{r.error}</p>}
+                    {tl.length === 0 && <div className="job-empty">等待阶段推进…</div>}
+                    {tl.map((p) => (
+                      <div key={p.key} className="tl-row">
+                        <span className="tl-stage">
+                          <span className={`run-phase st-p-${p.status}`}>{PHASE_LABEL[p.key] || p.key}</span>
+                          <span className="tl-status">{STAGE_LABEL[p.status] || p.status}</span>
+                        </span>
+                        <span className="tl-time">
+                          {fmtTime(p.started_at)}–{fmtTime(p.finished_at)} · {fmtDuration(p.duration_s)}
+                        </span>
+                        {p.detail && <span className="tl-detail">{p.detail}</span>}
+                      </div>
+                    ))}
+                    {runDetailLog[r.id]?.length > 0 && (
+                      <pre className="job-log run-log">{runDetailLog[r.id].join("\n")}</pre>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* ===== 普通训练任务创建 ===== */}
       <div className="train-form">
         <select
           className="input"

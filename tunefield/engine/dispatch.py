@@ -57,3 +57,30 @@ def create_train_handler():
         )
 
     return handler
+
+
+def create_run_handler():
+    """T11：端到端 run（pipeline_runs）处理：编排在工作线程执行。"""
+
+    async def handler(run_id: str) -> None:
+        from tunefield.engine.flow import run_pipeline
+
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, lambda: run_pipeline(run_id, loop=loop))
+
+    return handler
+
+
+def create_combined_handler():
+    """T11 默认队列 handler：按对象类型路由 —— training_job 走训练引擎，
+    pipeline_run 走端到端编排（run_pipeline）。"""
+    train_handler = create_train_handler()
+
+    async def handler(ref: str) -> None:
+        if db.get_pipeline_run(ref) is not None:
+            run_handler = create_run_handler()
+            await run_handler(ref)
+            return
+        await train_handler(ref)
+
+    return handler
