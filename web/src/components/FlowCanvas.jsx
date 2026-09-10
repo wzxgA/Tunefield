@@ -32,6 +32,13 @@ const ICONS = {
       <path d="M15 15 20.5 20.5" />
     </>
   ),
+  merge: (
+    <>
+      <path d="M4 5.5h4.5c4.5 0 4.5 13 9 13H22" />
+      <path d="M4 18.5h4.5c4.5 0 4.5-13 9-13H22" />
+      <circle cx="22.2" cy="12" r="0.4" />
+    </>
+  ),
   split: (
     <>
       <path d="M4 12h6.5m3 0h6.5" />
@@ -70,6 +77,14 @@ const STAGES = [
     key: "data", label: "数据源", sub: "DATA",
     params: [{ k: "dataset", label: "绑定数据集", type: "dataset" }],
     info: ["运行时读取该数据集原始文件", "格式自动识别：txt/md/pdf/docx/代码"],
+  },
+  {
+    key: "merge", label: "合并", sub: "MERGE", params: [],
+    info: [
+      "把流入的数据集拼接为一个新数据集",
+      "后续管线作用于合并后的数据集",
+      "相同来源组合幂等复用（不重复占盘）",
+    ],
   },
   {
     key: "parse", label: "解析", sub: "PARSE", params: [],
@@ -132,6 +147,7 @@ const SEED_CHAIN = ["data", "parse", "clean", "split", "train", "export"];
 // 节点 → 端到端 run 阶段（engine/flow.py 的 timeline key）映射
 const PHASE_OF = {
   data: "build",
+  merge: "build",
   parse: "build",
   clean: "build",
   split: "build",
@@ -245,9 +261,24 @@ export default function FlowCanvas({ project, onDatasetChange }) {
     [project, nodes, edges],
   );
 
+  const boundIds = [
+    ...new Set(
+      nodes.filter((n) => n.key === "data" && n.meta.dataset).map((n) => n.meta.dataset),
+    ),
+  ];
+  const multiSource = boundIds.length > 1;
+  const hasMerge = nodes.some((n) => n.key === "merge");
+  const willMerge = hasMerge && multiSource; // 合并节点 + 多源 → 拼接成新数据集
+
   const onRun = useCallback(async () => {
     if (launching) return;
-    if (!dataset) {
+    // 收集全部数据源节点绑定的数据集（去重）
+    const ids = [
+      ...new Set(
+        nodes.filter((n) => n.key === "data" && n.meta.dataset).map((n) => n.meta.dataset),
+      ),
+    ];
+    if (!ids.length) {
       setNotice({ kind: "err", text: "请先在「数据源」节点绑定数据集，再运行流水线" });
       return;
     }
@@ -255,12 +286,17 @@ export default function FlowCanvas({ project, onDatasetChange }) {
     setNotice(null);
     try {
       const created = await api.post("/api/runs", {
-        dataset_id: dataset.id,
+        dataset_ids: ids,
         auto_import: true,
+        merge: willMerge, // 有合并节点且多源 → 后端先拼接为新数据集
         ...readOverrides(),
       });
       setRun(normalizeRun(created));
-      setNotice({ kind: "ok", text: `已发起端到端 run ${String(created.id).slice(0, 8)}…` });
+      setNotice({
+        kind: "ok",
+        text: `已发起端到端 run ${String(created.id).slice(0, 8)}…`
+          + (willMerge ? `（${ids.length} 源已拼接为一个新数据集）` : ""),
+      });
       loadRuns();
       saveConfig(true); // 运行即固化当前参数到项目
     } catch (e) {
@@ -268,7 +304,7 @@ export default function FlowCanvas({ project, onDatasetChange }) {
     } finally {
       setLaunching(false);
     }
-  }, [dataset, launching, readOverrides, loadRuns, saveConfig]);
+  }, [nodes, launching, readOverrides, loadRuns, saveConfig, willMerge]);
 
   // 事件流：run.stage 点亮阶段、run.status 推进状态（终态回读权威数据）
   useEvents((msg) => {
@@ -604,10 +640,22 @@ export default function FlowCanvas({ project, onDatasetChange }) {
           type="button"
           className="ws-btn primary"
           onClick={onRun}
-          disabled={launching || run?.status === "running" || !dataset}
-          title={dataset ? "以画布参数发起端到端 run（构建 → 训练 → 导出 → 导入）" : "先在数据源节点绑定数据集"}
+          disabled={launching || run?.status === "running"}
+          title={willMerge
+            ? `把 ${boundIds.length} 个数据集拼接为一个新数据集后运行`
+            : multiSource
+              ? "多数据源汇池合并构建（拖入合并节点可拼接为新数据集）"
+              : dataset
+                ? "以画布参数发起端到端 run（构建 → 训练 → 导出 → 导入）"
+                : "先在数据源节点绑定数据集"}
         >
-          {run?.status === "running" ? "运行中…" : launching ? "发起中…" : "运行流水线"}
+          {willMerge
+            ? `运行流水线（拼接 ${boundIds.length} 源）`
+            : run?.status === "running"
+              ? "运行中…"
+              : launching
+                ? "发起中…"
+                : "运行流水线"}
         </button>
         <button
           type="button"

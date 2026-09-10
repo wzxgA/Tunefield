@@ -84,8 +84,17 @@ def create_app(handler=None) -> FastAPI:
 
     # ---------------- 数据集路由（T1 接入） ----------------
     @app.get("/api/datasets", tags=["datasets"])
-    async def list_datasets():
-        return db.list_datasets()
+    async def list_datasets(include_merged: bool = False):
+        """数据集清单（数据屏 / 素材下拉用）。
+
+        流程内合并数据集（source=merge，由画布合并节点拼接产生）默认隐藏——
+        它只是编排流水线内部的中间实体，不属于用户可见的数据资产；
+        调试/排查可用 ?include_merged=1 查看。
+        """
+        rows = db.list_datasets()
+        if not include_merged:
+            rows = [r for r in rows if (r.get("source") or "") != "merge"]
+        return rows
 
     @app.get("/api/datasets/{dataset_id}", tags=["datasets"])
     async def get_dataset(dataset_id: str):
@@ -93,6 +102,21 @@ def create_app(handler=None) -> FastAPI:
         if ds is None:
             return JSONResponse({"detail": "dataset not found"}, status_code=404)
         return ds
+
+    @app.post("/api/datasets/merge", tags=["datasets"])
+    async def merge_datasets_api(body: dict):
+        """把多个数据集拼接为一个新数据集（画布「合并」节点的真实语义）。"""
+        from tunefield.pipeline.merge import merge_datasets
+
+        ids = [str(x) for x in (body.get("dataset_ids") or []) if x]
+        if len(set(ids)) < 2:
+            return JSONResponse({"detail": "合并至少需要 2 个数据集"}, status_code=400)
+        try:
+            return await run_in_threadpool(
+                merge_datasets, ids, name=body.get("name") or None
+            )
+        except (ValueError, FileNotFoundError) as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=400)
 
     @app.delete("/api/datasets/{dataset_id}", tags=["datasets"])
     async def delete_dataset(dataset_id: str):
@@ -286,24 +310,53 @@ def create_app(handler=None) -> FastAPI:
 
     @app.post("/api/runs", tags=["runs"])
     async def create_run(body: dict):
-        """T11：一键端到端——数据管线 → 微调 → 导出 → 导入 Ollama。
+        """T11/W：一键端到端——数据管线 → 微调 → 导出 → 导入 Ollama。
 
-        body: {dataset_id, epochs?, chunk_size?, overlap?, template?, auto_import?}
+        body: {dataset_id | dataset_ids[], epochs?, chunk_size?, overlap?,
+        template?, auto_import?}；dataset_ids 多源时语料汇池合并构建。
         """
         import json as _json
 
-        dataset_id = body.get("dataset_id")
-        dataset = db.get_dataset(dataset_id) if dataset_id else None
-        if dataset is None:
+        ids = [str(x) for x in (body.get("dataset_ids") or []) if x]
+        if not ids and body.get("dataset_id"):
+            ids = [str(body["dataset_id"])]
+        if not ids:
             return JSONResponse(
-                {"detail": "缺少 dataset_id 或数据集不存在：请先上传数据"}, status_code=400
+                {"detail": "缺少 dataset_id（或 dataset_ids）：请先绑定数据集"},
+                status_code=400,
             )
+        seen: list[str] = []
+        for ds_id in ids:
+            if ds_id not in seen:
+                seen.append(ds_id)
+        datasets = []
+        for ds_id in seen:
+            ds = db.get_dataset(ds_id)
+            if ds is None:
+                return JSONResponse(
+                    {"detail": f"数据集不存在：{ds_id}"}, status_code=400
+                )
+            datasets.append(ds)
+        merged_from: list[str] = []
+        # 画布「合并」节点：把流入的多数据集**拼接成一个新数据集**，后续阶段作用于它
+        if bool(body.get("merge")) and len(datasets) > 1:
+            from tunefield.pipeline.merge import merge_datasets
+
+            try:
+                mres = await run_in_threadpool(merge_datasets, [d["id"] for d in datasets])
+            except (ValueError, FileNotFoundError) as exc:
+                return JSONResponse({"detail": str(exc)}, status_code=400)
+            merged_from = [d["id"] for d in datasets]
+            datasets = [mres["dataset"]]
+        dataset = datasets[0]  # 主数据集：产物与训练 job 挂其下
         cfg = {
             "epochs": body.get("epochs"),
             "chunk_size": int(body.get("chunk_size", 768)),
             "overlap": int(body.get("overlap", 96)),
             "template": str(body.get("template", "continuation")),
             "auto_import": bool(body.get("auto_import", True)),
+            "dataset_ids": [d["id"] for d in datasets],
+            "merged_from": merged_from,
         }
         run_id = _new_id()
         db.insert_pipeline_run(
@@ -318,7 +371,8 @@ def create_app(handler=None) -> FastAPI:
         events.hub.publish(
             "run.created",
             {"id": run_id, "domain": dataset["name"], "dataset_id": dataset["id"],
-             "dataset_name": dataset["name"], "status": "queued"},
+             "dataset_name": dataset["name"], "sources": len(datasets),
+             "status": "queued"},
         )
         queue.enqueue(run_id)
         return db.get_pipeline_run(run_id)

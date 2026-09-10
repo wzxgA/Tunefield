@@ -47,11 +47,13 @@ def _wait_run(client, run_id, timeout=5.0):
     raise AssertionError(f"run {run_id} 未在 {timeout}s 内收敛：{r.text}")
 
 
-def _fake_build(dataset, **kwargs):
+def _fake_build(datasets, **kwargs):
+    # 多源合并构建：签名接收数据集列表，主数据集 = 第一个
     return {
-        "dataset": dataset,
+        "dataset": datasets[0],
         "train_jsonl": "data/datasets/x/train.jsonl",
         "report": {"summary": {"sample_count": 7, "corpus_mb": 1.2}},
+        "built_ids": [d["id"] for d in datasets],
     }
 
 
@@ -95,7 +97,7 @@ def test_run_api_end_to_end_all_phases_ok(monkeypatch, tmp_path):
     from tunefield.assets import registry as asset_registry
 
     monkeypatch.setattr(asset_registry, "list_gguf_models", _fake_owned)
-    monkeypatch.setattr(build_mod, "run_build", _fake_build)
+    monkeypatch.setattr(build_mod, "run_build_multi", _fake_build)
 
     def _fake_run(self, job, dataset, cfg, *, loop=None, cmd=None):
         return {"job_id": job["id"], "workdir": "/w",
@@ -135,10 +137,10 @@ def test_run_api_build_failure_marks_failed(monkeypatch):
     ds = db.insert_dataset(id="ds-bad", name="bad", content_hash="hh-bad",
                            source=None, stats_json=None)
 
-    def _raise(dataset, **kwargs):
+    def _raise(datasets, **kwargs):
         raise ValueError("没有可训练的文本内容")
 
-    monkeypatch.setattr(build_mod, "run_build", _raise)
+    monkeypatch.setattr(build_mod, "run_build_multi", _raise)
     with TestClient(create_app()) as client:
         r = client.post("/api/runs", json={"dataset_id": ds["id"]})
         run_id = r.json()["id"]
@@ -210,8 +212,8 @@ def test_cli_run_end_to_end(monkeypatch, capsys):
                            source=None, stats_json=None)
     monkeypatch.setattr(ingest_mod, "ingest_path",
                         lambda path, name: db.get_dataset("ds-cli"))
-    monkeypatch.setattr(build_mod, "run_build",
-                        lambda dataset, **kw: _fake_build(dataset, **kw))
+    monkeypatch.setattr(build_mod, "run_build_multi",
+                        lambda datasets, **kw: _fake_build(datasets, **kw))
 
     def _fake_engine_run(_self, job, dataset, cfg, *, loop=None, cmd=None):
         return {"job_id": job["id"], "workdir": "/w",

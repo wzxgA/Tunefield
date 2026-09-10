@@ -42,9 +42,6 @@ def run_pipeline(run_id: str, *, loop=None) -> dict:
     run = db.get_pipeline_run(run_id)
     if run is None:
         raise EngineError(f"端到端 run 不存在：{run_id}")
-    dataset = db.get_dataset(run["dataset_id"]) if run.get("dataset_id") else None
-    if dataset is None:
-        raise EngineError("run 缺少 dataset_id 或数据集不存在")
 
     raw = run.get("config_json") or "{}"
     try:
@@ -57,6 +54,21 @@ def run_pipeline(run_id: str, *, loop=None) -> dict:
     template = str(cfg.get("template", "continuation"))
     auto_import = bool(cfg.get("auto_import", True))
     epochs = cfg.get("epochs")
+
+    # 数据源：config.dataset_ids（多源合并，画布多个数据源节点收集）优先，
+    # 兼容历史单 dataset_id；主数据集 = 列表第一个（产物/训练 job 挂其下）。
+    ids = [str(x) for x in (cfg.get("dataset_ids") or []) if x]
+    if run.get("dataset_id") and run["dataset_id"] not in ids:
+        ids.insert(0, run["dataset_id"])
+    datasets = []
+    for ds_id in ids:
+        ds = db.get_dataset(ds_id)
+        if ds is None:
+            raise EngineError(f"run 的数据集不存在：{ds_id}")
+        datasets.append(ds)
+    dataset = datasets[0] if datasets else None
+    if dataset is None:
+        raise EngineError("run 缺少 dataset_id 或数据集不存在")
 
     # ---------------- 阶段推进原语 ----------------
     def publish_stage(phase: dict) -> None:
@@ -108,15 +120,21 @@ def run_pipeline(run_id: str, *, loop=None) -> dict:
                 publish_stage(ph)
                 break
 
-    # ---------------- 阶段 1：构建数据 ----------------
+    # ---------------- 阶段 1：构建数据（单源或多源合并） ----------------
     try:
-        from tunefield.pipeline.build import run_build
+        from tunefield.pipeline.build import run_build_multi
 
         phase, t0 = begin("build", "构建数据")
-        res = run_build(dataset, chunk_size=chunk_size, overlap=overlap, template=template)
+        res = run_build_multi(
+            datasets, chunk_size=chunk_size, overlap=overlap, template=template
+        )
         summary = (res.get("report") or {}).get("summary") or {}
+        n_src = len(datasets)
+        merged_from = cfg.get("merged_from") or []
         end(phase, t0, detail=(
-            f"{res.get('train_jsonl')} · {summary.get('sample_count', 0)} 条样本"
+            (f"由 {len(merged_from)} 源拼接为「{dataset.get('name')}」 · " if merged_from
+             else (f"{n_src} 个数据集合并 · " if n_src > 1 else ""))
+            + f"{res.get('train_jsonl')} · {summary.get('sample_count', 0)} 条样本"
             f" · 语料 {summary.get('corpus_mb', '?')}MB"
         ), progress=0.3)
 
