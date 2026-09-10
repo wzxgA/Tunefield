@@ -14,6 +14,10 @@ PROJECT_ROOT = Path(
     os.environ.get("TUNEFIELD_ROOT", Path(__file__).resolve().parents[1])
 )
 
+# 流程内合并数据集（画布合并节点拼接产物）的保留开关：
+# 默认关闭——run 到达终态即回收；置 1 用于调试（跑完不删，便于查看 raw/产物）。
+KEEP_MERGED = os.environ.get("TUNEFIELD_KEEP_MERGED", "") not in ("", "0", "false", "False")
+
 # 数据目录
 DATA_DIR = PROJECT_ROOT / "data"
 RAW_DIR = DATA_DIR / "raw"            # 原始上传（按内容哈希分目录）

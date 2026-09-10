@@ -90,6 +90,143 @@ def test_merge_requires_two_sources():
         merge_datasets([a["id"], "不存在"])
 
 
+def test_cleanup_merged_dataset_recycles_and_reassigns_refs():
+    """终态回收：文件与记录消失，job/run 引用回填到源数据集。"""
+    from tunefield import config
+    from tunefield.pipeline.merge import cleanup_merged_dataset, merge_datasets
+    from tunefield.serve import db
+
+    a = _mk_dataset("回收源A", "回收内容。" * 30)
+    b = _mk_dataset("回收源B", "回收内容。" * 30)
+    merged = merge_datasets([a["id"], b["id"]])["dataset"]
+    raw = config.RAW_DIR / merged["content_hash"]
+    assert raw.exists()
+
+    # 造引用：run 与 job 都指向合并数据集
+    db.insert_pipeline_run(
+        id="run-merge-1", dataset_id=merged["id"], domain="x", job_id=None,
+        config_json=json.dumps({"merged_from": [a["id"], b["id"]]}),
+        status="done", created_at="2026-01-01T00:00:00Z",
+    )
+    db.insert_job(
+        job_id="job-merge-1", dataset_id=merged["id"], domain="x", kind="finetune",
+        base_model=None, config_json="{}", status="done",
+        created_at="2026-01-01T00:00:00Z",
+    )
+
+    assert cleanup_merged_dataset(
+        merged["id"], fallback_dataset_id=a["id"], merged_from=[a["id"], b["id"]]
+    ) is True
+
+    # 文件与 datasets 行已回收
+    assert not raw.exists()
+    assert db.get_dataset(merged["id"]) is None
+    # 引用回填到第一源
+    assert db.get_pipeline_run("run-merge-1")["dataset_id"] == a["id"]
+    assert db.get_job("job-merge-1")["dataset_id"] == a["id"]
+    # 源数据集安然无恙
+    assert db.get_dataset(a["id"]) is not None and db.get_dataset(b["id"]) is not None
+
+    # 幂等：再次回收返回 False（记录已不存在）
+    assert cleanup_merged_dataset(merged["id"]) is False
+
+
+def test_cleanup_skipped_when_keep_merged(monkeypatch):
+    """调试开关：KEEP_MERGED=1 时不回收。"""
+    from tunefield import config
+    from tunefield.pipeline import merge as merge_mod
+    from tunefield.serve import db
+
+    a = _mk_dataset("保留源A", "保留。" * 20)
+    b = _mk_dataset("保留源B", "保留。" * 20)
+    merged = merge_mod.merge_datasets([a["id"], b["id"]])["dataset"]
+
+    monkeypatch.setattr(config, "KEEP_MERGED", True)
+    assert merge_mod.cleanup_merged_dataset(merged["id"]) is False
+    assert db.get_dataset(merged["id"]) is not None
+    assert (config.RAW_DIR / merged["content_hash"]).exists()
+
+
+def test_cleanup_orphan_merged_on_startup():
+    """启动兜底：无引用的合并残留被回收（有引用的也能借 run 的 merged_from 回填）。"""
+    from tunefield import config
+    from tunefield.pipeline.merge import cleanup_orphan_merged, merge_datasets
+    from tunefield.serve import db
+
+    a = _mk_dataset("孤儿源A", "孤儿。" * 20)
+    b = _mk_dataset("孤儿源B", "孤儿。" * 20)
+
+    # 情况 1：无引用 → 直接回收行与文件
+    orphan1 = merge_datasets([a["id"], b["id"]])["dataset"]
+    # 情况 2：造一个不同组合（含 b 与自己以外内容）不现实，改用带引用的同一实体验证回填：
+    #   这里直接为 orphan1 之外再造一个实体，并挂 run 引用
+    c = _mk_dataset("孤儿源C", "孤儿。" * 20)
+    orphan2 = merge_datasets([a["id"], c["id"]])["dataset"]
+    db.insert_pipeline_run(
+        id="run-orphan-2", dataset_id=orphan2["id"], domain="y", job_id=None,
+        config_json=json.dumps({"merged_from": [a["id"], c["id"]]}),
+        status="failed", created_at="2026-01-01T00:00:00Z",
+    )
+
+    res = cleanup_orphan_merged()
+    assert set(res["removed"]) >= {orphan1["id"], orphan2["id"]}
+    assert db.get_dataset(orphan1["id"]) is None
+    assert db.get_dataset(orphan2["id"]) is None
+    assert db.get_pipeline_run("run-orphan-2")["dataset_id"] == a["id"]
+    assert not (config.RAW_DIR / orphan1["content_hash"]).exists()
+    assert not (config.RAW_DIR / orphan2["content_hash"]).exists()
+
+
+def test_run_pipeline_recycles_merged_on_done(monkeypatch):
+    """run 到达终态（done）→ 自动回收合并实体并把 run 素材回填到源。"""
+    from tunefield.engine import flow as flow_mod
+    from tunefield.engine.exporter import Exporter
+    from tunefield.engine.llmfactory.runner import LlmFactoryEngine
+    from tunefield.pipeline import build as build_mod
+    from tunefield.pipeline.merge import merge_datasets
+    from tunefield.serve import db
+
+    a = _mk_dataset("终态源A", "终态。" * 20)
+    b = _mk_dataset("终态源B", "终态。" * 20)
+    merged = merge_datasets([a["id"], b["id"]])["dataset"]
+    db.insert_pipeline_run(
+        id="run-clean-1", dataset_id=merged["id"], domain="z", job_id=None,
+        config_json=json.dumps({
+            "merged_from": [a["id"], b["id"]], "auto_import": False, "epochs": 1,
+        }),
+        status="running", created_at="2026-01-01T00:00:00Z",
+    )
+
+    monkeypatch.setattr(
+        build_mod, "run_build_multi",
+        lambda ds, **kw: {
+            "dataset": ds[0], "train_jsonl": "data/datasets/x/train.jsonl",
+            "report": {"summary": {"sample_count": 3, "corpus_mb": 0.1}},
+            "built_ids": [d["id"] for d in ds],
+        },
+    )
+    monkeypatch.setattr(
+        LlmFactoryEngine, "run",
+        lambda self, job, dataset, cfg, *, loop=None, cmd=None: {
+            "job_id": job["id"], "workdir": "/w", "epochs": 1, "degrade": [],
+        },
+    )
+    monkeypatch.setattr(
+        Exporter, "run_export",
+        lambda self, job, *, quants=("q4_k_m", "q8"), loop=None: {
+            "models": [], "fingerprint": {"created_at": "t"},
+        },
+    )
+
+    flow_mod.run_pipeline("run-clean-1")
+
+    # 合并实体已回收；run 素材回填第一源；源数据集健在
+    assert db.get_dataset(merged["id"]) is None
+    run = db.get_pipeline_run("run-clean-1")
+    assert run["status"] == "done" and run["dataset_id"] == a["id"]
+    assert db.get_dataset(a["id"]) is not None and db.get_dataset(b["id"]) is not None
+
+
 def test_merge_api_and_run_with_merge_flag(monkeypatch):
     from tunefield.serve import queue as queue_mod
     from tunefield.serve.app import create_app

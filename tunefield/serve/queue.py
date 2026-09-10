@@ -101,6 +101,16 @@ class JobQueue:
         for row in db.pipeline_runs_by_status(_INTERRUPTED):
             set_status(row["id"], "failed", error="进程重启导致端到端运行中断，等待手动重跑")
             logger.warning("端到端 run %s 标记为 failed（进程重启中断）", row["id"])
+        # 流程内合并数据集的生命周期 = run：进程被杀时终态清理没机会执行，
+        # 这里兜底回收残留（无引用直接回收；有引用用 run 的 merged_from 回填）。
+        try:
+            from tunefield.pipeline.merge import cleanup_orphan_merged
+
+            res = cleanup_orphan_merged()
+            if res.get("removed"):
+                logger.info("兜底回收流程内合并数据集 %s 个", len(res["removed"]))
+        except Exception:  # noqa: BLE001 - 回收失败不阻塞启动
+            logger.warning("兜底回收合并数据集失败", exc_info=True)
 
     async def _consume(self) -> None:
         while True:

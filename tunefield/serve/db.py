@@ -530,3 +530,41 @@ def set_pipeline_project_dataset(project_id: str, dataset_id: str) -> None:
             "UPDATE pipeline_projects SET dataset_id = ? WHERE id = ?",
             (dataset_id, project_id),
         )
+
+
+# ---------------------------------------------------------------------------
+# 数据集引用迁移 / 轻量删除（流程内合并数据集的回收用）
+# ---------------------------------------------------------------------------
+
+
+def reassign_dataset_refs(old_id: str, new_id: str) -> None:
+    """把仍引用 old_id 的运行记录（training_jobs / pipeline_runs）改指 new_id。
+
+    回收流程内合并数据集前调用：训练 job 与 run 的素材回填到源数据集，
+    满足外键约束，同时训练产物（adapters/gguf）不受影响。
+    """
+    with transaction() as conn:
+        conn.execute(
+            "UPDATE training_jobs SET dataset_id = ? WHERE dataset_id = ?",
+            (new_id, old_id),
+        )
+        conn.execute(
+            "UPDATE pipeline_runs SET dataset_id = ? WHERE dataset_id = ?",
+            (new_id, old_id),
+        )
+
+
+def delete_dataset_row(dataset_id: str) -> bool:
+    """仅删除 datasets 行（不级联删 job/产物）；用于流程内合并实体回收。"""
+    with transaction() as conn:
+        cur = conn.execute("DELETE FROM datasets WHERE id = ?", (dataset_id,))
+    return cur.rowcount > 0
+
+
+def pipeline_runs_by_dataset(dataset_id: str) -> list[dict[str, Any]]:
+    with transaction() as conn:
+        rows = conn.execute(
+            "SELECT * FROM pipeline_runs WHERE dataset_id = ? ORDER BY created_at",
+            (dataset_id,),
+        ).fetchall()
+    return [dict(r) for r in rows]

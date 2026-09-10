@@ -211,6 +211,7 @@ def run_pipeline(run_id: str, *, loop=None) -> dict:
 
         db.set_pipeline_run(run_id, status="done", progress=1.0)
         log_append(run_id, "[flow] 端到端 run 完成")
+        _cleanup_merged(dataset, cfg)
         return {
             "run_id": run_id, "job_id": job_id, "models": len(models),
             "timeline": _timeline(run_id),
@@ -218,7 +219,29 @@ def run_pipeline(run_id: str, *, loop=None) -> dict:
     except Exception as exc:
         fail_running(str(exc))
         db.set_pipeline_run(run_id, error=str(exc))
+        _cleanup_merged(dataset, cfg)
         raise
+
+
+def _cleanup_merged(dataset: dict | None, cfg: dict) -> None:
+    """run 到达终态（done/failed）时回收流程内合并数据集。
+
+    合并实体的生命周期 = 本次 run：完成或失败都回收原始文件/构建产物/记录，
+    并把 job/run 的素材引用回填到源数据集；清理异常绝不影响 run 结果。
+    """
+    merged_from = cfg.get("merged_from") or []
+    if not merged_from or not dataset or (dataset.get("source") or "") != "merge":
+        return
+    try:
+        from tunefield.pipeline.merge import cleanup_merged_dataset
+
+        cleanup_merged_dataset(
+            dataset["id"],
+            fallback_dataset_id=merged_from[0],
+            merged_from=merged_from,
+        )
+    except Exception:  # noqa: BLE001 - 回收失败不改变 run 结论
+        pass
 
 
 def _timeline(run_id: str) -> list[dict]:
