@@ -63,8 +63,8 @@ const ICONS = {
 
 // 阶段参数 schema：def 即真实默认值；split/text/train/export 的 key 与
 // POST /api/runs overrides 对齐（W5 直接读取生成请求）
-// params = 可配置参数（输入框/下拉，运行时生效或暂存）；info = 后端内置逻辑的只读说明
-// （渲染为徽章而非输入框，避免"能改但没用"的伪配置）
+// params = 可配置参数（按 type 渲染：dataset 下拉 / select 枚举 / number 数字 / text 文本）；
+// info = 节点行为说明（徽章）。仅当节点没有任何可编辑参数时，面板才标注"内置执行"。
 const STAGES = [
   {
     key: "data", label: "数据源", sub: "DATA",
@@ -81,13 +81,18 @@ const STAGES = [
   },
   {
     key: "split", label: "切片", sub: "CHUNK",
-    params: [{ k: "chunk_size", label: "块长 (tok)", def: "768" }, { k: "overlap", label: "重叠 (tok)", def: "96" }],
+    params: [
+      { k: "chunk_size", label: "块长 (tok)", type: "number", def: "768", min: 128, max: 2048 },
+      { k: "overlap", label: "重叠 (tok)", type: "number", def: "96", min: 0, max: 512 },
+    ],
     info: ["代码按函数/类边界不切半"],
   },
   {
     key: "text", label: "指令化", sub: "TEXT",
-    params: [{ k: "template", label: "模板", def: "continuation" }],
-    info: ["continuation 续写 / qa 问答"],
+    params: [{ k: "template", label: "模板", type: "select", def: "continuation", options: [
+      { v: "continuation", label: "续写（continuation）" },
+      { v: "qa", label: "问答（qa）" },
+    ] }],
   },
   {
     key: "check", label: "质检", sub: "CHECK", params: [],
@@ -95,12 +100,23 @@ const STAGES = [
   },
   {
     key: "train", label: "训练", sub: "TRAIN",
-    params: [{ k: "engine", label: "引擎 (A/B)", def: "A" }, { k: "epochs", label: "轮次", def: "3" }],
-    info: ["A 微调 QLoRA / B 从零预训练", "显存不足自动降级"],
+    params: [
+      { k: "engine", label: "引擎", type: "select", def: "A", options: [
+        { v: "A", label: "A · 微调 QLoRA" },
+        { v: "B", label: "B · 从零预训练" },
+      ] },
+      { k: "epochs", label: "轮次", type: "number", def: "3", min: 1, max: 20 },
+    ],
+    info: ["显存不足自动降级（缩序列→降位宽→降基座）"],
   },
   {
     key: "export", label: "导出", sub: "EXPORT",
-    params: [{ k: "quants", label: "量化档位", def: "q4_k_m,q8" }],
+    params: [{ k: "quants", label: "量化档位", type: "select", def: "q4_k_m,q8", options: [
+      { v: "q4_k_m,q8", label: "q4_k_m + q8（推荐）" },
+      { v: "q4_k_m", label: "仅 q4_k_m" },
+      { v: "q8", label: "仅 q8" },
+      { v: "f16,q4_k_m,q8", label: "f16 + q4_k_m + q8" },
+    ] }],
     info: ["LoRA 合并或完整权重 → GGUF"],
   },
   {
@@ -754,34 +770,60 @@ export default function FlowCanvas({ project, onDatasetChange }) {
                 <div className="fprop">
                   类型 <span className="v">{selDef.sub}</span>
                 </div>
-                {selDef.params.map((p) =>
-                  sel.key === "data" && p.k === "dataset" ? (
-                    <label key={p.k} className="fprop fedit">
-                      {p.label}
-                      <select
-                        className="input finput"
-                        value={sel.meta.dataset || ""}
-                        onChange={(e) => onDatasetSelect(e.target.value)}
-                      >
-                        {(datasets.length ? datasets : dataset ? [dataset] : []).map((d) => (
-                          <option key={d.id} value={d.id}>
-                            {d.name}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  ) : (
+                {selDef.params.map((p) => {
+                  const val = sel.meta[p.k] ?? p.def ?? "";
+                  if (p.type === "dataset") {
+                    return (
+                      <label key={p.k} className="fprop fedit">
+                        {p.label}
+                        <select
+                          className="input finput"
+                          value={sel.meta.dataset || ""}
+                          onChange={(e) => onDatasetSelect(e.target.value)}
+                        >
+                          {(datasets.length ? datasets : dataset ? [dataset] : []).map((d) => (
+                            <option key={d.id} value={d.id}>
+                              {d.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    );
+                  }
+                  if (p.type === "select") {
+                    return (
+                      <label key={p.k} className="fprop fedit">
+                        {p.label}
+                        <select
+                          className="input finput"
+                          value={val}
+                          onChange={(e) => setMeta(p.k, e.target.value)}
+                        >
+                          {(p.options || []).map((o) => (
+                            <option key={o.v} value={o.v}>
+                              {o.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    );
+                  }
+                  const isNum = p.type === "number";
+                  return (
                     <label key={p.k} className="fprop fedit">
                       {p.label}
                       <input
                         className="input finput"
-                        value={sel.meta[p.k] ?? ""}
+                        type={isNum ? "number" : "text"}
+                        min={p.min}
+                        max={p.max}
+                        value={val}
                         onChange={(e) => setMeta(p.k, e.target.value)}
                       />
                     </label>
-                  ),
-                )}
-                {selDef.info.length > 0 && (
+                  );
+                })}
+                {selDef.params.length === 0 && selDef.info.length > 0 && (
                   <>
                     <div className="fchips">
                       {selDef.info.map((line) => (
