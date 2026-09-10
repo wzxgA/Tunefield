@@ -173,7 +173,7 @@ export default function FlowCanvas({ project, onDatasetChange }) {
   }, []);
 
   const dsName = useCallback(
-    (id) => datasets.find((d) => d.id === id)?.name || String(id || "").slice(0, 8),
+    (id) => (id ? datasets.find((d) => d.id === id)?.name || String(id).slice(0, 8) : "未绑定"),
     [datasets],
   );
 
@@ -230,7 +230,11 @@ export default function FlowCanvas({ project, onDatasetChange }) {
   );
 
   const onRun = useCallback(async () => {
-    if (!dataset || launching) return;
+    if (launching) return;
+    if (!dataset) {
+      setNotice({ kind: "err", text: "请先在「数据源」节点绑定数据集，再运行流水线" });
+      return;
+    }
     setLaunching(true);
     setNotice(null);
     try {
@@ -584,8 +588,8 @@ export default function FlowCanvas({ project, onDatasetChange }) {
           type="button"
           className="ws-btn primary"
           onClick={onRun}
-          disabled={launching || run?.status === "running"}
-          title="以画布参数发起端到端 run（构建 → 训练 → 导出 → 导入）"
+          disabled={launching || run?.status === "running" || !dataset}
+          title={dataset ? "以画布参数发起端到端 run（构建 → 训练 → 导出 → 导入）" : "先在数据源节点绑定数据集"}
         >
           {run?.status === "running" ? "运行中…" : launching ? "发起中…" : "运行流水线"}
         </button>

@@ -1947,28 +1947,52 @@ body::before {
   }
 }
 
-/* 项目新建表单与项目卡（区别于素材卡：可删除、可存配置） */
-.proj-create {
-  display: flex;
-  gap: var(--gap-sm);
-  flex-wrap: wrap;
-  margin-top: var(--gap-md);
-  padding: var(--gap-md);
+/* 新建项目弹窗（暗色玻璃） */
+.modal-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  background: rgba(5, 6, 8, 0.58);
+  backdrop-filter: blur(6px);
+}
+
+.modal-box {
+  width: min(420px, 92vw);
+  padding: 20px 22px;
   border: 1px solid var(--stroke);
   border-radius: var(--radius-card);
-  background: rgba(255, 255, 255, 0.04);
-  backdrop-filter: blur(12px);
+  background: #14161a;
+  backdrop-filter: blur(18px) saturate(1.1);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22), 0 26px 60px -24px rgba(0, 0, 0, 1);
 }
 
-.proj-create .input {
-  flex: 1;
-  min-width: 180px;
+.modal-box h3 {
+  margin: 0 0 14px;
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
 }
 
-.proj-create select.input {
-  flex: 1.4;
+.modal-input {
+  width: 100%;
 }
 
+.modal-hint {
+  margin: 10px 0 0;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--gap-sm);
+  margin-top: 16px;
+}
+
+/* 项目卡（区别于素材卡：可删除、可存配置） */
 .pcard-static {
   cursor: default;
 }

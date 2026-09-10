@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
 
-// 编排项目页：列**编排项目**（项目 = 命名 + 绑定数据集 + 画布配置的组合实体），
-// 不是数据集列表——数据集是素材，上传多少个与这里无关。
-// 新建：命名 + 选数据集；点项目卡 → 进入整屏画布（画布参数持久化在项目上）。
+// 编排项目页：列**编排项目**（项目 = 名称 + 画布配置的组合实体）。
+// 新建 = 弹窗填名称即可；数据集进画布后由「数据源节点」的下拉绑定。
 
 const samplesOf = (dataset) => {
   try {
@@ -17,22 +16,16 @@ const samplesOf = (dataset) => {
 
 export default function ProjectsScreen({ onEnter, onUpload }) {
   const [projects, setProjects] = useState([]);
-  const [datasets, setDatasets] = useState([]);
-  const [creating, setCreating] = useState(false); // 展开新建表单
+  const [creating, setCreating] = useState(false); // 新建弹窗
   const [name, setName] = useState("");
-  const [dsId, setDsId] = useState("");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState(null); // {kind, text}
   const [loaded, setLoaded] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const [ps, ds] = await Promise.all([
-        api.get("/api/projects"),
-        api.get("/api/datasets").catch(() => []),
-      ]);
+      const ps = await api.get("/api/projects");
       setProjects(Array.isArray(ps) ? ps : []);
-      setDatasets(Array.isArray(ds) ? ds : []);
     } catch {
       /* 后端未就绪保持空态 */
     } finally {
@@ -49,19 +42,14 @@ export default function ProjectsScreen({ onEnter, onUpload }) {
       setNotice({ kind: "err", text: "请填写项目名称" });
       return;
     }
-    if (!dsId) {
-      setNotice({ kind: "err", text: "请选择要编排的数据集" });
-      return;
-    }
     setBusy(true);
     setNotice(null);
     try {
-      const proj = await api.post("/api/projects", { name: name.trim(), dataset_id: dsId });
+      const proj = await api.post("/api/projects", { name: name.trim() });
       setCreating(false);
       setName("");
-      setNotice({ kind: "ok", text: `已创建项目「${proj.name}」` });
       await load();
-      onEnter(proj); // 创建即进入画布
+      onEnter(proj); // 创建即进入画布，数据集在画布里由数据源节点绑定
     } catch (e) {
       setNotice({ kind: "err", text: `创建失败：${String(e.message || e)}` });
     } finally {
@@ -85,48 +73,21 @@ export default function ProjectsScreen({ onEnter, onUpload }) {
         <div>
           <h2 className="screen-title">编排项目</h2>
           <p className="screen-hint">
-            项目 = 一份素材数据集 + 一套可持久化的画布配置；同一数据集可建多个项目对比参数。
+            项目 = 一套可持久化的画布配置；创建后进画布，数据集由数据源节点绑定。
           </p>
         </div>
-        <button type="button" className="btn-ghost" onClick={() => setCreating((v) => !v)}>
-          {creating ? "收起新建" : "＋ 新建项目"}
+        <button type="button" className="btn-ghost" onClick={() => setCreating(true)}>
+          ＋ 新建项目
         </button>
       </div>
 
       {notice && <p className={`notice n-${notice.kind}`}>{notice}</p>}
 
-      {creating && (
-        <div className="proj-create glass-card">
-          <input
-            className="input"
-            placeholder="项目名称（如：青蛙文档 · 长块对比）"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-          />
-          <select
-            className="input"
-            value={dsId}
-            onChange={(e) => setDsId(e.target.value)}
-          >
-            <option value="">选择数据集…</option>
-            {datasets.map((d) => (
-              <option key={d.id} value={d.id}>
-                {d.name}
-                {d.status === "built" ? "（已构建）" : "（未构建）"}
-              </option>
-            ))}
-          </select>
-          <button type="button" className="btn-primary" onClick={onCreate} disabled={busy}>
-            {busy ? "创建中…" : "创建并进入画布"}
-          </button>
-        </div>
-      )}
-
       {loaded && projects.length === 0 ? (
         <div className="placeholder-card">
-          {datasets.length === 0
-            ? "还没有项目 · 先到「数据」上传一批文件，再回到这里新建编排项目"
-            : "还没有编排项目 · 点「＋ 新建项目」，选一份已上传的数据集开始"}
+          还没有编排项目 · 点「＋ 新建项目」，命名后进画布开始编排
+          <br />
+          还没有数据集？先到「数据」上传文件。
         </div>
       ) : (
         <div className="proj-grid">
@@ -146,13 +107,18 @@ export default function ProjectsScreen({ onEnter, onUpload }) {
                   </span>
                   <b>{p.name}</b>
                   <small>
-                    素材：{p.dataset?.name || "（数据集已删除）"}
-                    {samples != null ? ` · ${samples} 样本` : ""}
+                    {p.dataset
+                      ? `素材：${p.dataset.name}${samples != null ? ` · ${samples} 样本` : ""}`
+                      : "未绑定数据集 · 进画布后在数据源节点绑定"}
                   </small>
                   <span className="pi-meta">
-                    <span className={`badge ${built ? "st-built" : "st-ingested"}`}>
-                      {built ? "可运行" : "未构建"}
-                    </span>
+                    {!p.dataset ? (
+                      <span className="badge">未绑定</span>
+                    ) : (
+                      <span className={`badge ${built ? "st-built" : "st-ingested"}`}>
+                        {built ? "可运行" : "未构建"}
+                      </span>
+                    )}
                     {p.config ? <span className="badge m-quant">已存配置</span> : null}
                     <span className="pi-go">进入编排 →</span>
                   </span>
@@ -174,10 +140,33 @@ export default function ProjectsScreen({ onEnter, onUpload }) {
         </div>
       )}
 
-      <div className="wire" style={{ marginTop: 14 }}>
-        画布执行序由平台编排固定（构建 → 微调 → 导出 → 导入）；画布内的调参会保存到项目，
-        下次进入自动恢复。
-      </div>
+      {/* 新建项目弹窗：只填名称；数据集进画布后绑定 */}
+      {creating && (
+        <div className="modal-mask" onClick={(e) => e.target === e.currentTarget && setCreating(false)}>
+          <div className="modal-box">
+            <h3>新建编排项目</h3>
+            <input
+              className="input modal-input"
+              placeholder="项目名称（如：青蛙文档 · 长块对比）"
+              value={name}
+              autoFocus
+              onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && onCreate()}
+            />
+            <p className="modal-hint">
+              创建后进入画布；数据集在画布的「数据源」节点下拉绑定，参数随时可保存到项目。
+            </p>
+            <div className="modal-actions">
+              <button type="button" className="ws-btn" onClick={() => setCreating(false)}>
+                取消
+              </button>
+              <button type="button" className="ws-btn primary" onClick={onCreate} disabled={busy}>
+                {busy ? "创建中…" : "创建并进入画布"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 }

@@ -214,25 +214,23 @@ def create_app(handler=None) -> FastAPI:
 
     @app.post("/api/projects", tags=["projects"])
     async def create_project(body: dict):
-        """新建编排项目：命名 + 绑定一个数据集（素材）。"""
-        import json as _json
-
+        """新建编排项目：只需命名；数据集留空，进画布后由数据源节点绑定。"""
         name = (body.get("name") or "").strip()
-        dataset_id = body.get("dataset_id")
+        dataset_id = body.get("dataset_id") or None
         if not name:
             return JSONResponse({"detail": "项目名称必填"}, status_code=400)
-        ds = db.get_dataset(dataset_id) if dataset_id else None
-        if ds is None:
-            return JSONResponse(
-                {"detail": "缺少 dataset_id 或数据集不存在：请先上传数据"}, status_code=400
-            )
+        ds = None
+        if dataset_id:
+            ds = db.get_dataset(dataset_id)
+            if ds is None:
+                return JSONResponse({"detail": "数据集不存在"}, status_code=400)
         pid = _new_id()
         db.insert_pipeline_project(
-            id=pid, name=name, dataset_id=ds["id"], created_at=_now_iso()
+            id=pid, name=name, dataset_id=ds["id"] if ds else None, created_at=_now_iso()
         )
         events.hub.publish(
             "project.created",
-            {"id": pid, "name": name, "dataset": ds["name"]},
+            {"id": pid, "name": name, "dataset": ds["name"] if ds else None},
         )
         return _project_view(db.get_pipeline_project(pid))
 

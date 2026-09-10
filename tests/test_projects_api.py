@@ -21,27 +21,37 @@ def test_project_create_list_config_delete(monkeypatch, tmp_path):
 
     ds = _seed_dataset()
     with TestClient(create_app()) as c:
-        # 校验：缺名称 / 数据集不存在
+        # 校验：缺名称；数据集给了但不存在的仍 400
         assert c.post("/api/projects", json={"name": " ", "dataset_id": ds["id"]}).status_code == 400
         assert c.post("/api/projects", json={"name": "p", "dataset_id": "nope"}).status_code == 400
 
-        # 创建成功 → 列表联表数据集信息
-        r = c.post("/api/projects", json={"name": "我的编排", "dataset_id": ds["id"]})
+        # 只填名称即可创建（数据集留空，进画布后绑定）
+        r = c.post("/api/projects", json={"name": "我的编排"})
         assert r.status_code == 200
         proj = r.json()
-        assert proj["name"] == "我的编排"
-        assert proj["dataset"]["name"] == "测试语料"
+        assert proj["name"] == "我的编排" and proj["dataset"] is None
+
+        # 带数据集创建 → 列表联表数据集信息
+        r2 = c.post("/api/projects", json={"name": "带素材", "dataset_id": ds["id"]})
+        assert r2.status_code == 200
+        assert r2.json()["dataset"]["name"] == "测试语料"
 
         # 配置持久化 → 再查恢复
         cfg = {"nodes": [{"id": "n1", "key": "split", "meta": {"chunk_size": "512"}}], "edges": []}
         assert c.put(f"/api/projects/{proj['id']}/config", json={"config": cfg}).status_code == 200
         listed = c.get("/api/projects").json()
-        assert len(listed) == 1 and listed[0]["config"]["nodes"][0]["meta"]["chunk_size"] == "512"
+        target = next(x for x in listed if x["id"] == proj["id"])
+        assert target["config"]["nodes"][0]["meta"]["chunk_size"] == "512"
 
-        # 删除 → 404 再删 / 列表为空；数据集不受影响
+        # 换绑数据集 → 持久化到项目实体
+        c.put(f"/api/projects/{proj['id']}/dataset", json={"dataset_id": ds["id"]})
+        target = next(x for x in c.get("/api/projects").json() if x["id"] == proj["id"])
+        assert target["dataset"]["id"] == ds["id"]
+
+        # 删除 → 再删 404 / 列表只剩一个；数据集不受影响
         assert c.delete(f"/api/projects/{proj['id']}").json()["deleted"] is True
         assert c.delete(f"/api/projects/{proj['id']}").status_code == 404
-        assert c.get("/api/projects").json() == []
+        assert len(c.get("/api/projects").json()) == 1
         assert db_get_dataset_ok(ds["id"])
 
 
