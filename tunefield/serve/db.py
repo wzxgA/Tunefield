@@ -88,6 +88,14 @@ CREATE TABLE IF NOT EXISTS quantized_models (
   created_at  TEXT
 );
 
+CREATE TABLE IF NOT EXISTS pipeline_projects (
+  id          TEXT PRIMARY KEY,       -- 编排项目：素材(数据集) + 画布配置的组合实体
+  name        TEXT NOT NULL,
+  dataset_id  TEXT REFERENCES datasets(id),
+  config_json TEXT,                   -- 画布持久化（nodes/edges）
+  created_at  TEXT
+);
+
 CREATE TABLE IF NOT EXISTS pipeline_runs (
   id            TEXT PRIMARY KEY,     -- T11 端到端编排（一键 run）
   dataset_id    TEXT REFERENCES datasets(id),
@@ -458,4 +466,67 @@ def update_pipeline_phase(
         conn.execute(
             "UPDATE pipeline_runs SET timeline_json = ? WHERE id = ?",
             (json.dumps(phases, ensure_ascii=False), run_id),
+        )
+
+
+# ---------------------------------------------------------------------------
+# 编排项目访问层（项目 = 素材(数据集) + 画布配置的组合实体）
+# ---------------------------------------------------------------------------
+
+
+def insert_pipeline_project(
+    *, id: str, name: str, dataset_id: str, created_at: str,
+) -> dict[str, Any]:
+    with transaction() as conn:
+        conn.execute(
+            "INSERT INTO pipeline_projects (id, name, dataset_id, created_at) "
+            "VALUES (?,?,?,?)",
+            (id, name, dataset_id, created_at),
+        )
+        row = conn.execute(
+            "SELECT * FROM pipeline_projects WHERE id = ?", (id,)
+        ).fetchone()
+    return dict(row) if row else {}
+
+
+def get_pipeline_project(project_id: str) -> dict[str, Any] | None:
+    with transaction() as conn:
+        row = conn.execute(
+            "SELECT * FROM pipeline_projects WHERE id = ?", (project_id,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def list_pipeline_projects() -> list[dict[str, Any]]:
+    with transaction() as conn:
+        rows = conn.execute(
+            "SELECT * FROM pipeline_projects ORDER BY created_at"
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def delete_pipeline_project(project_id: str) -> bool:
+    """删除项目（不动数据集与已有 run）。返回是否删除了行。"""
+    with transaction() as conn:
+        cur = conn.execute(
+            "DELETE FROM pipeline_projects WHERE id = ?", (project_id,)
+        )
+    return cur.rowcount > 0
+
+
+def set_pipeline_project_config(project_id: str, config_json: str) -> None:
+    """画布配置持久化（nodes/edges）。"""
+    with transaction() as conn:
+        conn.execute(
+            "UPDATE pipeline_projects SET config_json = ? WHERE id = ?",
+            (config_json, project_id),
+        )
+
+
+def set_pipeline_project_dataset(project_id: str, dataset_id: str) -> None:
+    """画布内换绑数据集 → 更新项目实体的素材指向。"""
+    with transaction() as conn:
+        conn.execute(
+            "UPDATE pipeline_projects SET dataset_id = ? WHERE id = ?",
+            (dataset_id, project_id),
         )

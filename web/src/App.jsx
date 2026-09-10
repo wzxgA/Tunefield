@@ -102,9 +102,16 @@ export default function App() {
   const [activity, setActivity] = useState([]);
   const [clock, setClock] = useState(clockNow());
 
-  // 编排流转：项目选择页点卡片 → flow-full 整屏模式（W4 挂画布）；返回回选择页
-  const enterFlow = (dataset) => setFlowProject(dataset);
+  // 编排流转：项目选择页点卡片 → flow-full 整屏模式；返回回选择页
+  const enterFlow = (project) => setFlowProject(project);
   const exitFlow = () => setFlowProject(null);
+  // 画布内数据源换绑数据集 → 本地同步 + 持久化到项目实体
+  const rebindDataset = (ds) => {
+    setFlowProject((p) => (p ? { ...p, dataset: ds } : p));
+    if (flowProject?.id) {
+      api.put(`/api/projects/${flowProject.id}/dataset`, { dataset_id: ds.id }).catch(() => {});
+    }
+  };
 
   const loadSys = useCallback(() => {
     api.get("/api/system/status").then(setSys).catch(() => {});
@@ -215,7 +222,7 @@ export default function App() {
                 {flowProject.status === "built" ? "已构建 · 可运行" : "未构建 · 运行时自动构建"}
               </span>
             </div>
-            <FlowCanvas dataset={flowProject} onDatasetChange={setFlowProject} />
+            <FlowCanvas project={flowProject} onDatasetChange={rebindDataset} />
           </div>
         ) : (
           <div className="fade-in">
@@ -223,7 +230,7 @@ export default function App() {
             {screen === "train" && <TrainScreen />}
             {screen === "chat" && <ChatScreen />}
             {screen === "projects" && (
-              <ProjectsScreen onEnter={enterFlow} onNew={() => setScreen("data")} />
+              <ProjectsScreen onEnter={enterFlow} onUpload={() => setScreen("data")} />
             )}
             {screen === "models" && <ModelsScreen />}
           </div>

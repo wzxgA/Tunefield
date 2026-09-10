@@ -150,7 +150,8 @@ function mkNode(key, x, y, datasetId) {
   return { id: `n${seq}`, key, x, y, meta };
 }
 
-export default function FlowCanvas({ dataset, onDatasetChange }) {
+export default function FlowCanvas({ project, onDatasetChange }) {
+  const dataset = project?.dataset;
   const [nodes, setNodes] = useState([]);
   const [edges, setEdges] = useState([]);
   const [view, setView] = useState({ x: 60, y: 60, z: 1 });
@@ -210,6 +211,24 @@ export default function FlowCanvas({ dataset, onDatasetChange }) {
     };
   }, [nodes]);
 
+  // 画布配置持久化：存/取项目实体（nodes/edges），进项目自动恢复上次参数
+  const saveConfig = useCallback(
+    async (silent = false) => {
+      if (!project) return;
+      const config = {
+        nodes: nodes.map((n) => ({ id: n.id, key: n.key, x: Math.round(n.x), y: Math.round(n.y), meta: n.meta })),
+        edges,
+      };
+      try {
+        await api.put(`/api/projects/${project.id}/config`, { config });
+        if (!silent) setNotice({ kind: "ok", text: "画布配置已保存到项目" });
+      } catch (e) {
+        if (!silent) setNotice({ kind: "err", text: `保存失败：${String(e.message || e)}` });
+      }
+    },
+    [project, nodes, edges],
+  );
+
   const onRun = useCallback(async () => {
     if (!dataset || launching) return;
     setLaunching(true);
@@ -223,12 +242,13 @@ export default function FlowCanvas({ dataset, onDatasetChange }) {
       setRun(normalizeRun(created));
       setNotice({ kind: "ok", text: `已发起端到端 run ${String(created.id).slice(0, 8)}…` });
       loadRuns();
+      saveConfig(true); // 运行即固化当前参数到项目
     } catch (e) {
       setNotice({ kind: "err", text: `发起失败：${String(e.message || e)}` });
     } finally {
       setLaunching(false);
     }
-  }, [dataset, launching, readOverrides, loadRuns]);
+  }, [dataset, launching, readOverrides, loadRuns, saveConfig]);
 
   // 事件流：run.stage 点亮阶段、run.status 推进状态（终态回读权威数据）
   useEvents((msg) => {
@@ -423,10 +443,29 @@ export default function FlowCanvas({ dataset, onDatasetChange }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dataset?.id]);
 
+  // 进入项目：有已存配置则恢复（含节点 id 计数推进防冲突），否则种子链
+  const restoredRef = useRef(null);
   useEffect(() => {
-    seed();
+    const pid = project?.id;
+    if (!pid || restoredRef.current === pid) return;
+    restoredRef.current = pid;
+    const cfg = project?.config;
+    if (cfg?.nodes?.length) {
+      setNodes(cfg.nodes);
+      setEdges(cfg.edges || []);
+      setSelNode(null);
+      setSelEdge(null);
+      const mx = cfg.nodes.reduce((m, n) => {
+        const t = /^n(\d+)$/.exec(n.id);
+        return t ? Math.max(m, Number(t[1])) : m;
+      }, 0);
+      seq = Math.max(seq, mx);
+      requestAnimationFrame(() => fitRef.current());
+    } else {
+      seed();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [project?.id]);
 
   /* ---------- 指针交互 ---------- */
   const nearestInPort = useCallback(
@@ -549,6 +588,14 @@ export default function FlowCanvas({ dataset, onDatasetChange }) {
           title="以画布参数发起端到端 run（构建 → 训练 → 导出 → 导入）"
         >
           {run?.status === "running" ? "运行中…" : launching ? "发起中…" : "运行流水线"}
+        </button>
+        <button
+          type="button"
+          className="ws-btn"
+          onClick={() => saveConfig()}
+          title="把当前节点布局与参数保存到项目，下次进入自动恢复"
+        >
+          保存配置
         </button>
         {run && (
           <span className="pill" title={run.error || undefined}>

@@ -181,6 +181,91 @@ def create_app(handler=None) -> FastAPI:
         ds = ingest_files(contents, name=name.strip(), source="upload")
         return {"dataset": ds, "deduped": False}
 
+    # ---------------- 编排项目（项目 = 素材 + 画布配置的组合实体） ----------------
+
+    def _project_view(row: dict) -> dict:
+        """项目行联表数据集信息 + config 解析，供前端列表/画布直接消费。"""
+        ds = db.get_dataset(row.get("dataset_id") or "")
+        config = None
+        raw = row.get("config_json")
+        if raw:
+            try:
+                import json as _json
+
+                config = _json.loads(raw)
+            except (ValueError, TypeError):
+                config = None
+        return {
+            **row,
+            "config": config,
+            "dataset": ds
+            and {
+                "id": ds["id"],
+                "name": ds["name"],
+                "status": ds["status"],
+                "content_hash": ds.get("content_hash"),
+                "stats_json": ds.get("stats_json"),
+            },
+        }
+
+    @app.get("/api/projects", tags=["projects"])
+    async def list_projects():
+        return [_project_view(r) for r in db.list_pipeline_projects()]
+
+    @app.post("/api/projects", tags=["projects"])
+    async def create_project(body: dict):
+        """新建编排项目：命名 + 绑定一个数据集（素材）。"""
+        import json as _json
+
+        name = (body.get("name") or "").strip()
+        dataset_id = body.get("dataset_id")
+        if not name:
+            return JSONResponse({"detail": "项目名称必填"}, status_code=400)
+        ds = db.get_dataset(dataset_id) if dataset_id else None
+        if ds is None:
+            return JSONResponse(
+                {"detail": "缺少 dataset_id 或数据集不存在：请先上传数据"}, status_code=400
+            )
+        pid = _new_id()
+        db.insert_pipeline_project(
+            id=pid, name=name, dataset_id=ds["id"], created_at=_now_iso()
+        )
+        events.hub.publish(
+            "project.created",
+            {"id": pid, "name": name, "dataset": ds["name"]},
+        )
+        return _project_view(db.get_pipeline_project(pid))
+
+    @app.delete("/api/projects/{project_id}", tags=["projects"])
+    async def remove_project(project_id: str):
+        """删除项目（不动数据集与已有 run）。"""
+        if db.delete_pipeline_project(project_id):
+            return {"deleted": True}
+        return JSONResponse({"detail": "project not found"}, status_code=404)
+
+    @app.put("/api/projects/{project_id}/config", tags=["projects"])
+    async def save_project_config(project_id: str, body: dict):
+        """画布配置持久化（nodes/edges）；进项目时恢复上次参数。"""
+        import json as _json
+
+        if db.get_pipeline_project(project_id) is None:
+            return JSONResponse({"detail": "project not found"}, status_code=404)
+        db.set_pipeline_project_config(
+            project_id, _json.dumps(body.get("config") or {}, ensure_ascii=False)
+        )
+        return {"saved": True}
+
+    @app.put("/api/projects/{project_id}/dataset", tags=["projects"])
+    async def rebind_project_dataset(project_id: str, body: dict):
+        """画布内换绑数据集 → 持久化到项目实体。"""
+        ds = db.get_dataset(body.get("dataset_id") or "") if body.get("dataset_id") else None
+        if ds is None:
+            return JSONResponse({"detail": "dataset not found"}, status_code=404)
+        if db.get_pipeline_project(project_id) is None:
+            return JSONResponse({"detail": "project not found"}, status_code=404)
+        db.set_pipeline_project_dataset(project_id, ds["id"])
+        return _project_view(db.get_pipeline_project(project_id))
+
     # ---------------- T11 端到端 run（一键 run + 阶段时间线） ----------------
 
     def _parse_timeline(raw) -> list:

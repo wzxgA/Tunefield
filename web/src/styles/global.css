@@ -1947,6 +1947,60 @@ body::before {
   }
 }
 
+/* 项目新建表单与项目卡（区别于素材卡：可删除、可存配置） */
+.proj-create {
+  display: flex;
+  gap: var(--gap-sm);
+  flex-wrap: wrap;
+  margin-top: var(--gap-md);
+  padding: var(--gap-md);
+  border: 1px solid var(--stroke);
+  border-radius: var(--radius-card);
+  background: rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(12px);
+}
+
+.proj-create .input {
+  flex: 1;
+  min-width: 180px;
+}
+
+.proj-create select.input {
+  flex: 1.4;
+}
+
+.pcard-static {
+  cursor: default;
+}
+
+.pcard-static:hover {
+  transform: none;
+  border-color: var(--stroke);
+  background: rgba(255, 255, 255, 0.04);
+  box-shadow: none;
+}
+
+.pcard-head {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  cursor: pointer;
+  margin: -16px;
+  padding: 16px;
+  border-radius: var(--radius-card);
+  transition: background var(--dur) var(--ease);
+}
+
+.pcard-head:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.pcard-del {
+  margin-top: 4px;
+  padding: 5px 0;
+  font-size: 10.5px;
+}
+
 /* ---- W3 整屏编排占位区（W4 换 FlowCanvas） ---- */
 .flow-area {
   display: flex;
