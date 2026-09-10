@@ -215,7 +215,7 @@ export default function App() {
                 {flowProject.status === "built" ? "已构建 · 可运行" : "未构建 · 运行时自动构建"}
               </span>
             </div>
-            <FlowCanvas dataset={flowProject} />
+            <FlowCanvas dataset={flowProject} onDatasetChange={setFlowProject} />
           </div>
         ) : (
           <div className="fade-in">

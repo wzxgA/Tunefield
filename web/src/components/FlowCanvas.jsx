@@ -63,16 +63,50 @@ const ICONS = {
 
 // 阶段参数 schema：def 即真实默认值；split/text/train/export 的 key 与
 // POST /api/runs overrides 对齐（W5 直接读取生成请求）
+// params = 可配置参数（输入框/下拉，运行时生效或暂存）；info = 后端内置逻辑的只读说明
+// （渲染为徽章而非输入框，避免"能改但没用"的伪配置）
 const STAGES = [
-  { key: "data", label: "数据源", sub: "DATA", params: [{ k: "pattern", label: "文件模式", def: "*.txt / pdf / code" }] },
-  { key: "parse", label: "解析", sub: "PARSE", params: [{ k: "engine", label: "解析引擎", def: "txt/md/pdf" }] },
-  { key: "clean", label: "清洗", sub: "CLEAN", params: [{ k: "rules", label: "清洗规则", def: "6 条内置" }] },
-  { key: "split", label: "切片", sub: "CHUNK", params: [{ k: "chunk_size", label: "块长 (tok)", def: "768" }, { k: "overlap", label: "重叠 (tok)", def: "96" }] },
-  { key: "text", label: "指令化", sub: "TEXT", params: [{ k: "template", label: "模板", def: "continuation" }] },
-  { key: "check", label: "质检", sub: "CHECK", params: [{ k: "dup", label: "重复率阈值", def: "0.20" }] },
-  { key: "train", label: "训练", sub: "TRAIN", params: [{ k: "engine", label: "引擎 (A/B)", def: "A" }, { k: "epochs", label: "轮次", def: "3" }] },
-  { key: "export", label: "导出", sub: "EXPORT", params: [{ k: "quants", label: "量化档位", def: "q4_k_m,q8" }] },
-  { key: "chat", label: "对话", sub: "CHAT", params: [{ k: "ollama", label: "Ollama 模型", def: "tunefield-*" }] },
+  {
+    key: "data", label: "数据源", sub: "DATA",
+    params: [{ k: "dataset", label: "绑定数据集", type: "dataset" }],
+    info: ["运行时读取该数据集原始文件", "格式自动识别：txt/md/pdf/docx/代码"],
+  },
+  {
+    key: "parse", label: "解析", sub: "PARSE", params: [],
+    info: ["txt / md / pdf / docx / 代码", "按扩展名自动路由解析器", "逐文件容错，坏文件不中断"],
+  },
+  {
+    key: "clean", label: "清洗", sub: "CLEAN", params: [],
+    info: ["控制字符/乱码", "特殊空格", "全半角", "HTML 残留", "页码行", "页眉页脚", "代码文件只做字符归一"],
+  },
+  {
+    key: "split", label: "切片", sub: "CHUNK",
+    params: [{ k: "chunk_size", label: "块长 (tok)", def: "768" }, { k: "overlap", label: "重叠 (tok)", def: "96" }],
+    info: ["代码按函数/类边界不切半"],
+  },
+  {
+    key: "text", label: "指令化", sub: "TEXT",
+    params: [{ k: "template", label: "模板", def: "continuation" }],
+    info: ["continuation 续写 / qa 问答"],
+  },
+  {
+    key: "check", label: "质检", sub: "CHECK", params: [],
+    info: ["样本数 / 重复率", "长度分布 P50·P90", "低质占比", "结论与建议入报告"],
+  },
+  {
+    key: "train", label: "训练", sub: "TRAIN",
+    params: [{ k: "engine", label: "引擎 (A/B)", def: "A" }, { k: "epochs", label: "轮次", def: "3" }],
+    info: ["A 微调 QLoRA / B 从零预训练", "显存不足自动降级"],
+  },
+  {
+    key: "export", label: "导出", sub: "EXPORT",
+    params: [{ k: "quants", label: "量化档位", def: "q4_k_m,q8" }],
+    info: ["LoRA 合并或完整权重 → GGUF"],
+  },
+  {
+    key: "chat", label: "对话", sub: "CHAT", params: [],
+    info: ["产物导入 Ollama", "对话屏直接选用"],
+  },
 ];
 
 const stageOf = (k) => STAGES.find((t) => t.key === k);
@@ -108,19 +142,15 @@ function normalizeRun(r) {
 
 let seq = 0;
 
-function mkNode(key, x, y) {
+function mkNode(key, x, y, datasetId) {
   const t = stageOf(key);
   seq += 1;
-  return {
-    id: `n${seq}`,
-    key,
-    x,
-    y,
-    meta: Object.fromEntries(t.params.map((p) => [p.k, p.def])),
-  };
+  const meta = Object.fromEntries(t.params.map((p) => [p.k, p.def]));
+  if (key === "data" && datasetId) meta.dataset = datasetId;
+  return { id: `n${seq}`, key, x, y, meta };
 }
 
-export default function FlowCanvas({ dataset }) {
+export default function FlowCanvas({ dataset, onDatasetChange }) {
   const [nodes, setNodes] = useState([]);
   const [edges, setEdges] = useState([]);
   const [view, setView] = useState({ x: 60, y: 60, z: 1 });
@@ -132,6 +162,19 @@ export default function FlowCanvas({ dataset }) {
   const [history, setHistory] = useState([]);
   const [launching, setLaunching] = useState(false);
   const [notice, setNotice] = useState(""); // {kind, text}
+  const [datasets, setDatasets] = useState([]); // 数据源节点可绑定的数据集清单
+
+  useEffect(() => {
+    api
+      .get("/api/datasets")
+      .then((rows) => setDatasets(Array.isArray(rows) ? rows : []))
+      .catch(() => {});
+  }, []);
+
+  const dsName = useCallback(
+    (id) => datasets.find((d) => d.id === id)?.name || String(id || "").slice(0, 8),
+    [datasets],
+  );
 
   /* ---------- run 加载 / 发起（W5） ---------- */
   const loadRuns = useCallback(async () => {
@@ -265,13 +308,16 @@ export default function FlowCanvas({ dataset }) {
     );
   }, []);
 
-  const addNode = useCallback((key, vx, vy) => {
-    const n = mkNode(key, Math.round(vx), Math.round(vy));
-    setNodes((ns) => [...ns, n]);
-    setSelNode(n.id);
-    setSelEdge(null);
-    return n.id;
-  }, []);
+  const addNode = useCallback(
+    (key, vx, vy) => {
+      const n = mkNode(key, Math.round(vx), Math.round(vy), dataset?.id);
+      setNodes((ns) => [...ns, n]);
+      setSelNode(n.id);
+      setSelEdge(null);
+      return n.id;
+    },
+    [dataset],
+  );
 
   const deleteSel = useCallback(() => {
     if (selNode) {
@@ -364,7 +410,7 @@ export default function FlowCanvas({ dataset }) {
     const es = [];
     let prev = null;
     SEED_CHAIN.forEach((key, i) => {
-      const n = mkNode(key, 40 + i * (NODE_W + 50), 150 + (i % 2 ? 46 : 0));
+      const n = mkNode(key, 40 + i * (NODE_W + 50), 150 + (i % 2 ? 46 : 0), dataset?.id);
       ns.push(n);
       if (prev) es.push({ from: prev, to: n.id });
       prev = n.id;
@@ -374,7 +420,8 @@ export default function FlowCanvas({ dataset }) {
     setSelNode(null);
     setSelEdge(null);
     requestAnimationFrame(() => fitRef.current());
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataset?.id]);
 
   useEffect(() => {
     seed();
@@ -475,6 +522,13 @@ export default function FlowCanvas({ dataset }) {
 
   const setMeta = (k, v) => {
     setNodes((ns) => ns.map((n) => (n.id === selNode ? { ...n, meta: { ...n.meta, [k]: v } } : n)));
+  };
+
+  // 数据源节点切换绑定数据集：节点 meta + 画布项目（crumb/标题/运行目标）同步
+  const onDatasetSelect = (id) => {
+    setMeta("dataset", id);
+    const ds = datasets.find((d) => d.id === id);
+    if (ds) onDatasetChange?.(ds);
   };
 
   const linkPath = linking
@@ -599,9 +653,18 @@ export default function FlowCanvas({ dataset }) {
                     {t.params.map((p) => (
                       <div key={p.k} className="fr">
                         <span>{p.label}</span>
-                        <b>{n.meta[p.k]}</b>
+                        <b>
+                          {n.key === "data" && p.k === "dataset"
+                            ? dsName(n.meta.dataset)
+                            : n.meta[p.k]}
+                        </b>
                       </div>
                     ))}
+                    {t.params.length === 0 && t.info.length > 0 && (
+                      <div className="fr">
+                        <span className="finfo-line">{t.info.slice(0, 2).join(" · ")}</span>
+                      </div>
+                    )}
                   </div>
                   <span className="fport in" />
                   <span className="fport out" />
@@ -640,16 +703,47 @@ export default function FlowCanvas({ dataset }) {
                 <div className="fprop">
                   类型 <span className="v">{selDef.sub}</span>
                 </div>
-                {selDef.params.map((p) => (
-                  <label key={p.k} className="fprop fedit">
-                    {p.label}
-                    <input
-                      className="input finput"
-                      value={sel.meta[p.k] ?? ""}
-                      onChange={(e) => setMeta(p.k, e.target.value)}
-                    />
-                  </label>
-                ))}
+                {selDef.params.map((p) =>
+                  sel.key === "data" && p.k === "dataset" ? (
+                    <label key={p.k} className="fprop fedit">
+                      {p.label}
+                      <select
+                        className="input finput"
+                        value={sel.meta.dataset || ""}
+                        onChange={(e) => onDatasetSelect(e.target.value)}
+                      >
+                        {(datasets.length ? datasets : dataset ? [dataset] : []).map((d) => (
+                          <option key={d.id} value={d.id}>
+                            {d.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  ) : (
+                    <label key={p.k} className="fprop fedit">
+                      {p.label}
+                      <input
+                        className="input finput"
+                        value={sel.meta[p.k] ?? ""}
+                        onChange={(e) => setMeta(p.k, e.target.value)}
+                      />
+                    </label>
+                  ),
+                )}
+                {selDef.info.length > 0 && (
+                  <>
+                    <div className="fchips">
+                      {selDef.info.map((line) => (
+                        <span key={line} className="fchip">
+                          {line}
+                        </span>
+                      ))}
+                    </div>
+                    <div className="f-empty" style={{ marginTop: 6 }}>
+                      由后端内置执行，暂不可调
+                    </div>
+                  </>
+                )}
                 <div className="fprop">
                   坐标 <span className="v">{Math.round(sel.x)}, {Math.round(sel.y)}</span>
                 </div>

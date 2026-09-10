@@ -2303,6 +2303,30 @@ body::before {
   gap: 8px;
 }
 
+.finfo-line {
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fchips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 8px 0 2px;
+}
+
+.fchip {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 9.5px;
+  letter-spacing: 0.04em;
+  border: 1px solid var(--stroke);
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.04);
+}
+
 .fprop .v {
   margin-left: auto;
   color: var(--text-muted);
